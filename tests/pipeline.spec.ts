@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { processMarkdown } from '../src/pipeline.js';
+import { processMarkdown, telegramify, markdownify } from '../src/pipeline.js';
 import { ContentType, Text, File, Photo } from '../src/content.js';
 
 describe('ProcessMarkdownTest', () => {
@@ -95,5 +95,56 @@ describe('ProcessMarkdownTest', () => {
     expect(results[1].contentType).toBe(ContentType.FILE);
     expect(results[2].contentType).toBe(ContentType.TEXT);
     expect((results[2] as Text).text).toContain('last');
+  });
+});
+
+describe('ApiWrappersTest', () => {
+  it('telegramify wrapper', async () => {
+    const results = await telegramify('**test**');
+    expect(results.length).toBe(1);
+    expect((results[0] as Text).text).toBe('test');
+    expect((results[0] as Text).entities[0].type).toBe('bold');
+  });
+
+  it('markdownify wrapper', () => {
+    const mdv2 = markdownify('**test**');
+    expect(mdv2).toBe('*test*');
+  });
+});
+
+describe('StripNewlinesAdjustEdgeTest', () => {
+  it('entities starting exactly on boundary of stripped newlines', async () => {
+    const md = '\n'.repeat(10) + '**hello**' + '\n'.repeat(10);
+    const results = await processMarkdown(md);
+    expect(results.length).toBe(1);
+    const textRes = results[0] as Text;
+    expect(textRes.text).toBe('hello');
+    expect(textRes.entities.length).toBe(1);
+    expect(textRes.entities[0].offset).toBe(0);
+    expect(textRes.entities[0].length).toBe(5);
+  });
+});
+
+describe('IntegrationExcessiveEntityCountTest', () => {
+  it('handles thousands of entities without crashing and preserves counts', async () => {
+    const words = [];
+    for (let i = 0; i < 5000; i++) {
+      words.push(`**bold${i}**`);
+    }
+    const md = words.join(' ');
+    
+    // Default maxMessageLength is 4096. 5000 entities will exceed it.
+    const results = await processMarkdown(md, { maxMessageLength: 4096 });
+    expect(results.length).toBeGreaterThan(1);
+    
+    let entityCount = 0;
+    for (const res of results) {
+      if (res.contentType === ContentType.TEXT) {
+        entityCount += (res as Text).entities.length;
+      }
+    }
+    // Hard splits may duplicate an entity spanning the boundary
+    expect(entityCount).toBeGreaterThanOrEqual(5000);
+    expect(entityCount).toBeLessThan(5050);
   });
 });

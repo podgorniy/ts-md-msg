@@ -657,7 +657,8 @@ export function convertWithSegments(
     enableTables: true,
     enableTasklists: true,
     enableMath: true,
-    enableGfm: true
+    enableGfm: true,
+    enableFootnotes: true
   }));
   const walker = new EventWalker(config, preprocessed);
   return walker.walk(rawEvents);

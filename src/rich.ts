@@ -536,7 +536,8 @@ export function richify(
     enableTables: true,
     enableTasklists: true,
     enableMath: true,
-    enableGfm: true
+    enableGfm: true,
+    enableFootnotes: true
   }));
   const walker = new RichHtmlWalker();
   const htmlText = walker.walk(rawEvents);
@@ -877,4 +878,19 @@ export function splitRich(
   } else {
     return splitMarkdown(richMessage, byteLimit, blockLimit);
   }
+}
+
+export function telegramifyRich(
+  markdown: string,
+  options?: {
+    mode?: RichMode;
+    isRtl?: boolean;
+    skipEntityDetection?: boolean;
+    latexEscape?: boolean;
+    byteLimit?: number;
+    blockLimit?: number;
+  }
+): InputRichMessage[] {
+  const rich = richify(markdown, options);
+  return splitRich(rich, options);
 }

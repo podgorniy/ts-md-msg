@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { richify, splitRich, InputRichMessage } from '../src/rich.js';
+import { richify, splitRich, telegramifyRich, InputRichMessage } from '../src/rich.js';
 
 function decodeHtml(html: string) {
   return html.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
@@ -120,5 +120,39 @@ describe('SplitRichTest', () => {
     expect(result[0].markdown).toBe('P1');
     expect(result[1].markdown).toBe('P2');
     expect(result[2].markdown).toBe('P3');
+  });
+});
+
+describe('IntegrationMassiveRichDocumentTest', () => {
+  it('splits extremely long document properly', () => {
+    let mdParts = [];
+    for (let i = 0; i < 600; i++) {
+      if (i % 5 === 0) {
+        mdParts.push(`> Blockquote ${i}\n> With some long text ${'a'.repeat(50)}`);
+      } else if (i % 4 === 0) {
+        mdParts.push(`\`\`\`python\nprint("code ${i}")\n\`\`\``);
+      } else if (i % 3 === 0) {
+        mdParts.push(`- Item 1\n- Item 2\n- Item 3`);
+      } else {
+        mdParts.push(`Paragraph ${i} with **bold** and *italic* and ||spoiler||. ${'long '.repeat(10)}`);
+      }
+    }
+    const md = mdParts.join('\n\n');
+    expect(Buffer.byteLength(md, 'utf8')).toBeGreaterThan(32768);
+
+    const chunks = telegramifyRich(md);
+    
+    expect(chunks.length).toBeGreaterThan(1);
+    
+    let totalHtml = '';
+    for (const chunk of chunks) {
+      const html = chunk.html!;
+      expect(Buffer.byteLength(html, 'utf8')).toBeLessThanOrEqual(32768);
+      expect(html.includes('<p>') && !html.includes('</p>')).toBe(false); 
+      totalHtml += html;
+    }
+    
+    expect(totalHtml).toContain('Blockquote 0');
+    expect(totalHtml).toContain('Paragraph 599');
   });
 });

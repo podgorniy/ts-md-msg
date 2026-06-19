@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convert } from '../src/converter.js';
+import { convert, validateTelegramEmoji, preprocessSpoilers } from '../src/converter.js';
 import { MessageEntity } from '../src/entity.js';
 
 function findEntity(entities: MessageEntity[], type: string): MessageEntity | undefined {
@@ -207,5 +207,49 @@ describe('Utf16OffsetTest', () => {
     // "你好 " = 2 + 1 = 3 UTF-16 code units
     expect(bold!.offset).toBe(3);
     expect(bold!.length).toBe(2);
+  });
+});
+
+describe('PreprocessingUtilitiesTest', () => {
+  it('validateTelegramEmoji', () => {
+    expect(validateTelegramEmoji('tg://emoji?id=1234567890123456789')).toBe('1234567890123456789');
+    expect(validateTelegramEmoji('tg://emoji?id=123')).toBeNull();
+    expect(validateTelegramEmoji('https://example.com')).toBeNull();
+  });
+
+  it('preprocessSpoilers with code blocks', () => {
+    const text = '||secret|| `||not secret||` ```\n||not secret||\n```';
+    const result = preprocessSpoilers(text);
+    expect(result).toBe('<tg-spoiler>secret</tg-spoiler> `||not secret||` ```\n||not secret||\n```');
+  });
+});
+
+describe('FootnotesTest', () => {
+  it('footnote references and definitions', () => {
+    const res = convert('word[^1]\n\n[^1]: note');
+    expect(res.text).toContain('word');
+    expect(res.text).toContain('[1]');
+    expect(res.text).toContain('note');
+  });
+});
+
+describe('NestedBlockquoteTest', () => {
+  it('nested blockquotes stack entities', () => {
+    const res = convert('> level 1\n>> level 2');
+    const bqs = res.entities.filter(e => e.type === 'blockquote');
+    expect(bqs.length).toBeGreaterThanOrEqual(2);
+    expect(bqs.some(e => extractEntityText(res.text, e).includes('level 1') && extractEntityText(res.text, e).includes('level 2'))).toBe(true);
+    expect(bqs.some(e => extractEntityText(res.text, e).includes('level 2') && !extractEntityText(res.text, e).includes('level 1'))).toBe(true);
+  });
+});
+
+describe('TableEdgeCasesTest', () => {
+  it('uneven rows padding', () => {
+    const res = convert('| a | b |\n| --- | --- |\n| 1 |');
+    const pre = findEntity(res.entities, 'pre');
+    expect(pre).toBeDefined();
+    const tableText = extractEntityText(res.text, pre!);
+    expect(tableText).toContain('a | b');
+    expect(tableText).toContain('1 |');
   });
 });
