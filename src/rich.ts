@@ -1,6 +1,6 @@
 import { escapeLatex, preprocessSpoilers, validateTelegramEmoji } from './converter.js';
 import * as md from '../native/index.js';
-import { Event, Range, Tag } from './types.js';
+import { Event, Range, Tag, TagEnd } from './types.js';
 
 export type RichMode = 'html' | 'markdown';
 
@@ -174,16 +174,19 @@ class RichHtmlWalker {
       } else if ('Table' in tag) {
         this.enterBlock();
         this.onStartTable(tag.Table);
-      } else if ('FootnoteDefinition' in tag) {
+      } else if (tag === 'FootnoteDefinition') {
         this.enterBlock();
         this.closeParagraph();
-        const name = escapeHtmlAttr(String(tag.FootnoteDefinition));
-        this.emit(`<tg-reference name="${name}">`);
+        this.emit(`<tg-reference>`);
       }
+    } else if (tag === 'FootnoteDefinition') {
+       this.enterBlock();
+       this.closeParagraph();
+       this.emit(`<tg-reference>`);
     }
   }
 
-  private onEnd(tag: Tag) {
+  private onEnd(tag: TagEnd) {
     if (tag === 'Strong') this.closeInline();
     else if (tag === 'Emphasis') this.closeInline();
     else if (tag === 'Strikethrough') this.closeInline();
@@ -212,19 +215,19 @@ class RichHtmlWalker {
       this.closeParagraph();
       this.emit('</tg-reference>');
       this.leaveBlock();
-    } else if (tag === 'Heading') {
-      const level = this._headingLevels.pop() || 1;
-      this.emit(`</h${level}>`);
-      this.leaveBlock();
-    } else if (tag === 'BlockQuote') {
-      this.closeParagraph();
-      this.emit('</blockquote>');
-      this.leaveBlock();
-    } else if (tag === 'List') {
-      this.onEndList();
-      this.leaveBlock();
     } else if (typeof tag === 'object' && tag !== null) {
-      // It shouldn't get here for End, but just in case
+      if ('Heading' in tag) {
+        const level = this._headingLevels.pop() || 1;
+        this.emit(`</h${level}>`);
+        this.leaveBlock();
+      } else if ('BlockQuote' in tag) {
+        this.closeParagraph();
+        this.emit('</blockquote>');
+        this.leaveBlock();
+      } else if ('List' in tag) {
+        this.onEndList();
+        this.leaveBlock();
+      }
     }
   }
 
@@ -528,7 +531,13 @@ export function richify(
   if (latexEscape) preprocessed = escapeLatex(preprocessed);
   preprocessed = preprocessSpoilers(preprocessed);
 
-  const rawEvents = JSON.parse(md.parse(preprocessed));
+  const rawEvents = JSON.parse(md.parse(preprocessed, {
+    enableStrikethrough: true,
+    enableTables: true,
+    enableTasklists: true,
+    enableMath: true,
+    enableGfm: true
+  }));
   const walker = new RichHtmlWalker();
   const htmlText = walker.walk(rawEvents);
 
@@ -539,12 +548,333 @@ export function richify(
   };
 }
 
+function htmlFragmentToText(fragment: string): string {
+  let text = fragment.replace(/<[^>]*>/g, '');
+  text = text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return text;
+}
+
+function splitTextByUtf8Bytes(text: string, byteLimit: number): string[] {
+  if (byteLimit <= 0) throw new Error("byteLimit must leave room for wrapper tags");
+  const chunks: string[] = [];
+  let current = '';
+  let currentBytes = 0;
+  for (const ch of text) {
+    const chBytes = Buffer.byteLength(ch, 'utf8');
+    if (current.length > 0 && currentBytes + chBytes > byteLimit) {
+      chunks.push(current);
+      current = '';
+      currentBytes = 0;
+    }
+    current += ch;
+    currentBytes += chBytes;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+function splitTextByEscapedUtf8Bytes(text: string, byteLimit: number): string[] {
+  if (byteLimit <= 0) throw new Error("byteLimit must leave room for wrapper tags");
+  const chunks: string[] = [];
+  let current = '';
+  let currentBytes = 0;
+  for (const ch of text) {
+    const escapedBytes = Buffer.byteLength(escapeHtmlText(ch), 'utf8');
+    if (current.length > 0 && currentBytes + escapedBytes > byteLimit) {
+      chunks.push(current);
+      current = '';
+      currentBytes = 0;
+    }
+    current += ch;
+    currentBytes += escapedBytes;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+function extractWrappedText(htmlText: string, tag: string): string | null {
+  const openTag = `<${tag}>`;
+  const closeTag = `</${tag}>`;
+  if (htmlText.startsWith(openTag) && htmlText.endsWith(closeTag)) {
+    return htmlText.substring(openTag.length, htmlText.length - closeTag.length);
+  }
+  return null;
+}
+
+function extractPreText(htmlText: string): [string, string, string] | null {
+  const match = htmlText.match(/^(<pre(?:><code[^>]*>|>))(.*?)(<\/code><\/pre>|<\/pre>)$/s);
+  if (!match) return null;
+  return [match[1], match[2], match[3]];
+}
+
+function makeBlock(htmlText: string): RichBlock {
+  return {
+    html: htmlText,
+    byteLen: Buffer.byteLength(htmlText, 'utf8'),
+    blockCount: 1,
+  };
+}
+
+function splitOversizedBlock(block: RichBlock, byteLimit: number): RichBlock[] {
+  const htmlText = block.html;
+
+  const paragraph = extractWrappedText(htmlText, "p");
+  if (paragraph !== null) {
+    const budget = byteLimit - Buffer.byteLength("<p></p>", 'utf8');
+    const parts = splitTextByEscapedUtf8Bytes(htmlFragmentToText(paragraph), budget);
+    return parts.filter(p => p).map(p => makeBlock(`<p>${escapeHtmlText(p)}</p>`));
+  }
+
+  const pre = extractPreText(htmlText);
+  if (pre !== null) {
+    const [openTag, content, closeTag] = pre;
+    const budget = byteLimit - Buffer.byteLength(openTag + closeTag, 'utf8');
+    let unescaped = content.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const parts = splitTextByEscapedUtf8Bytes(unescaped, budget);
+    return parts.filter(p => p).map(p => makeBlock(openTag + escapeHtmlText(p) + closeTag));
+  }
+  return [];
+}
+
+function flushChunk(
+  chunks: InputRichMessage[],
+  blocks: RichBlock[],
+  mode: string,
+  isRtl?: boolean,
+  skipEntityDetection?: boolean
+) {
+  const joined = blocks.map(b => b.html).join('');
+  if (mode === 'html') {
+    chunks.push({ html: joined, isRtl, skipEntityDetection });
+  } else {
+    chunks.push({ markdown: joined, isRtl, skipEntityDetection });
+  }
+}
+
+function binBlocks(
+  blocks: RichBlock[],
+  byteLimit: number,
+  blockLimit: number,
+  isRtl: boolean | undefined,
+  skipEntityDetection: boolean | undefined,
+  mode: string
+): InputRichMessage[] {
+  if (blocks.length === 0) return [];
+  
+  const totalBytes = blocks.reduce((acc, b) => acc + b.byteLen, 0);
+  const totalBlocks = blocks.reduce((acc, b) => acc + b.blockCount, 0);
+  if (totalBytes <= byteLimit && totalBlocks <= blockLimit) {
+    const joined = blocks.map(b => b.html).join('');
+    if (mode === 'html') {
+      return [{ html: joined, isRtl, skipEntityDetection }];
+    } else {
+      return [{ markdown: joined, isRtl, skipEntityDetection }];
+    }
+  }
+
+  const chunks: InputRichMessage[] = [];
+  let currentBlocks: RichBlock[] = [];
+  let currentBytes = 0;
+  let currentBlockCount = 0;
+
+  for (const block of blocks) {
+    if (block.byteLen > byteLimit) {
+      if (currentBlocks.length > 0) {
+        flushChunk(chunks, currentBlocks, mode, isRtl, skipEntityDetection);
+        currentBlocks = [];
+        currentBytes = 0;
+        currentBlockCount = 0;
+      }
+      const splitBlocks = splitOversizedBlock(block, byteLimit);
+      if (splitBlocks.length > 0) {
+        for (const sb of splitBlocks) {
+          flushChunk(chunks, [sb], mode, isRtl, skipEntityDetection);
+        }
+      } else {
+        console.warn(`Single block exceeds byte limit (${block.byteLen} > ${byteLimit}), emitting standalone. Telegram may reject it.`);
+        flushChunk(chunks, [block], mode, isRtl, skipEntityDetection);
+      }
+      continue;
+    }
+
+    if (currentBytes + block.byteLen > byteLimit || currentBlockCount + block.blockCount > blockLimit) {
+      flushChunk(chunks, currentBlocks, mode, isRtl, skipEntityDetection);
+      currentBlocks = [];
+      currentBytes = 0;
+      currentBlockCount = 0;
+    }
+
+    currentBlocks.push(block);
+    currentBytes += block.byteLen;
+    currentBlockCount += block.blockCount;
+  }
+
+  if (currentBlocks.length > 0) {
+    flushChunk(chunks, currentBlocks, mode, isRtl, skipEntityDetection);
+  }
+  return chunks;
+}
+
+const BLOCK_TAGS = new Set([
+  "p", "h1", "h2", "h3", "h4", "h5", "h6",
+  "pre", "blockquote", "ul", "ol", "table",
+  "hr", "tg-math-block", "img", "tg-reference", "details"
+]);
+
+function findTagEnd(htmlContent: string, start: number, tagName: string): number {
+  let pos = start;
+  let depth = 0;
+  const length = htmlContent.length;
+  const regex = new RegExp(`<(\\/?)(${tagName})(?:\\s|>|\\/>)`, 'g');
+  regex.lastIndex = pos;
+
+  let match;
+  while ((match = regex.exec(htmlContent)) !== null) {
+    const isClose = match[1] === '/';
+    if (isClose) {
+      depth--;
+      if (depth === 0) {
+        const end = htmlContent.indexOf('>', match.index);
+        return end !== -1 ? end + 1 : length;
+      }
+    } else {
+      depth++;
+    }
+  }
+  return length;
+}
+
+function heuristicHtmlBlocks(htmlContent: string): RichBlock[] {
+  const blocks: RichBlock[] = [];
+  let pos = 0;
+  const length = htmlContent.length;
+
+  while (pos < length) {
+    if (htmlContent[pos] !== '<') {
+      let nextTag = htmlContent.indexOf('<', pos);
+      if (nextTag === -1) {
+        const fragment = htmlContent.substring(pos);
+        blocks.push(makeBlock(fragment));
+        break;
+      }
+      pos = nextTag;
+      continue;
+    }
+
+    const match = htmlContent.substring(pos).match(/^<([a-zA-Z][a-zA-Z0-9-]*)/);
+    if (!match) {
+      let nextTag = htmlContent.indexOf('<', pos + 1);
+      if (nextTag === -1) nextTag = length;
+      const fragment = htmlContent.substring(pos, nextTag);
+      blocks.push(makeBlock(fragment));
+      pos = nextTag;
+      continue;
+    }
+
+    const tagName = match[1].toLowerCase();
+    if (!BLOCK_TAGS.has(tagName)) {
+      const end = findTagEnd(htmlContent, pos, tagName);
+      const fragment = htmlContent.substring(pos, end);
+      blocks.push(makeBlock(fragment));
+      pos = end;
+      continue;
+    }
+
+    if (tagName === 'hr' || tagName === 'img') {
+      let close = htmlContent.indexOf('>', pos);
+      if (close === -1) close = length - 1;
+      const end = close + 1;
+      const fragment = htmlContent.substring(pos, end);
+      blocks.push(makeBlock(fragment));
+      pos = end;
+      continue;
+    }
+
+    const end = findTagEnd(htmlContent, pos, tagName);
+    const fragment = htmlContent.substring(pos, end);
+    blocks.push(makeBlock(fragment));
+    pos = end;
+  }
+  return blocks;
+}
+
+function splitHtml(richMessage: InputRichMessage, byteLimit: number, blockLimit: number): InputRichMessage[] {
+  const htmlContent = richMessage.html!;
+  const blocks = heuristicHtmlBlocks(htmlContent);
+  return binBlocks(blocks, byteLimit, blockLimit, richMessage.isRtl, richMessage.skipEntityDetection, 'html');
+}
+
+function splitMarkdown(richMessage: InputRichMessage, byteLimit: number, blockLimit: number): InputRichMessage[] {
+  const mdContent = richMessage.markdown!;
+  if (!mdContent.trim()) return [];
+
+  if (Buffer.byteLength(mdContent, 'utf8') <= byteLimit) {
+    return [richMessage];
+  }
+
+  const paragraphs = mdContent.split('\n\n');
+  const chunks: InputRichMessage[] = [];
+  let currentParts: string[] = [];
+  let currentBytes = 0;
+
+  for (const para of paragraphs) {
+    const paraBytes = Buffer.byteLength(para, 'utf8');
+    const sepBytes = currentParts.length > 0 ? 2 : 0;
+
+    if (paraBytes > byteLimit) {
+      if (currentParts.length > 0) {
+        chunks.push({
+          markdown: currentParts.join('\n\n'),
+          isRtl: richMessage.isRtl,
+          skipEntityDetection: richMessage.skipEntityDetection,
+        });
+        currentParts = [];
+        currentBytes = 0;
+      }
+      for (const part of splitTextByUtf8Bytes(para, byteLimit)) {
+        chunks.push({
+          markdown: part,
+          isRtl: richMessage.isRtl,
+          skipEntityDetection: richMessage.skipEntityDetection,
+        });
+      }
+      continue;
+    }
+
+    if (currentBytes + sepBytes + paraBytes > byteLimit && currentParts.length > 0) {
+      chunks.push({
+        markdown: currentParts.join('\n\n'),
+        isRtl: richMessage.isRtl,
+        skipEntityDetection: richMessage.skipEntityDetection,
+      });
+      currentParts = [];
+      currentBytes = 0;
+    }
+
+    currentParts.push(para);
+    currentBytes += (currentBytes > 0 ? sepBytes + paraBytes : paraBytes);
+  }
+
+  if (currentParts.length > 0) {
+    chunks.push({
+      markdown: currentParts.join('\n\n'),
+      isRtl: richMessage.isRtl,
+      skipEntityDetection: richMessage.skipEntityDetection,
+    });
+  }
+
+  return chunks.length > 0 ? chunks : [richMessage];
+}
+
 export function splitRich(
   richMessage: InputRichMessage,
   options?: { byteLimit?: number; blockLimit?: number }
 ): InputRichMessage[] {
-  // Simple heuristic split logic could be added here if needed,
-  // but usually users won't hit limits easily or we can implement it similarly to Python's _split_html.
-  // For the initial port, we will just return the message since the Python heuristic is complex.
-  return [richMessage];
+  const byteLimit = options?.byteLimit ?? RICH_BYTE_LIMIT;
+  const blockLimit = options?.blockLimit ?? RICH_BLOCK_LIMIT;
+  if (richMessage.html !== undefined) {
+    return splitHtml(richMessage, byteLimit, blockLimit);
+  } else {
+    return splitMarkdown(richMessage, byteLimit, blockLimit);
+  }
 }

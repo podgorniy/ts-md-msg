@@ -1,7 +1,7 @@
 import * as md from '../native/index.js';
 import { getRuntimeConfig, RenderConfig } from './config.js';
 import { MessageEntity, utf16Len } from './entity.js';
-import { Event, Range, Segment, Tag } from './types.js';
+import { Event, Range, Segment, Tag, TagEnd } from './types.js';
 import { LatexToUnicodeHelper } from './latex/helper.js';
 
 const _latexHelper = new LatexToUnicodeHelper();
@@ -210,7 +210,7 @@ export class EventWalker {
     }
   }
 
-  private onEnd(tag: Tag, sourceRange: Range | null) {
+  private onEnd(tag: TagEnd, sourceRange: Range | null) {
     const end = sourceRange ? sourceRange.end : null;
     if (tag === 'Strong') this.popEntity('bold');
     else if (tag === 'Emphasis') this.popEntity('italic');
@@ -220,16 +220,12 @@ export class EventWalker {
     else if (tag === 'TableCell') this.onEndTableCell();
     else if (tag === 'TableRow' || tag === 'TableHead') this.onEndTableRow();
     else if (tag === 'Table') this.onEndTable(end);
+    else if (tag === 'CodeBlock') this.onEndCodeBlock(end);
     else if (tag === 'Link') this.popEntity('text_link');
     else if (tag === 'Image') this.popEntityAny();
     else if (tag === 'FootnoteDefinition') {}
-    else if (tag === 'Heading') this.onEndHeading(end);
-    else if (tag === 'CodeBlock') this.onEndCodeBlock(end);
-    else if (tag === 'BlockQuote') this.onEndBlockQuote(end);
-    else if (tag === 'List') this.onEndList(end);
     else if (typeof tag === 'object' && tag !== null) {
       if ('Heading' in tag) this.onEndHeading(end);
-      else if ('CodeBlock' in tag) this.onEndCodeBlock(end);
       else if ('BlockQuote' in tag) this.onEndBlockQuote(end);
       else if ('List' in tag) this.onEndList(end);
     }
@@ -330,7 +326,7 @@ export class EventWalker {
 
   private onStartHeading(headingData: any, sourceStart: number | null) {
     this.ensureBlockSpacing(sourceStart);
-    const level = `H${headingData.level}`;
+    const level = headingData.level as string;
     const symbolMap: Record<string, string> = {
       H1: this._config.markdownSymbol.headingLevel1,
       H2: this._config.markdownSymbol.headingLevel2,
@@ -656,7 +652,13 @@ export function convertWithSegments(
   }
   preprocessed = preprocessSpoilers(preprocessed);
 
-  const rawEvents = JSON.parse(md.parse(preprocessed));
+  const rawEvents = JSON.parse(md.parse(preprocessed, {
+    enableStrikethrough: true,
+    enableTables: true,
+    enableTasklists: true,
+    enableMath: true,
+    enableGfm: true
+  }));
   const walker = new EventWalker(config, preprocessed);
   return walker.walk(rawEvents);
 }

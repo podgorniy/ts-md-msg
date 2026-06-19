@@ -14,16 +14,17 @@
 - **`src/types.ts`**: TypeScript interface definitions matching the Rust AST (Events, Tags, Ranges). **Crucial for understanding the input shape.**
 - **`src/converter.ts`**: Contains `EventWalker`, a state machine that iterates over the Rust AST. It manages tag depth, tracks text boundaries, and outputs intermediate `Segment` arrays and Telegram `MessageEntity` objects.
 - **`src/pipeline.ts`**: The chunking and routing logic. Implements `telegramify()` and `markdownify()`. Responsible for slicing content into safe chunks (`Text` or `File`) that respect Telegram's message size limits.
-- **`src/rich.ts`**: Implements `RichHtmlWalker`. Formats the output into Telegram's specialized Rich HTML format, handling strict tag rules (`<tg-spoiler>`, `<b>`, `<i>`, `<tg-math>`).
+- **`src/rich.ts`**: Implements `RichHtmlWalker`. Formats the output into Telegram's specialized Rich HTML format, handling strict tag rules (`<tg-spoiler>`, `<b>`, `<i>`, `<tg-math>`). Includes `splitRich` algorithm to heuristically chunk oversized payloads while respecting HTML boundaries.
 - **`src/mdv2.ts`**: The fallback MarkdownV2 stringifier. Safely escapes the ~20 mandatory Telegram special characters utilizing entity boundaries.
 - **`src/entity.ts`**: Utilities for Telegram `MessageEntity` manipulation, slicing, and length calculation. 
 - **`src/latex/`**: Mathematical mapping logic. `const.ts` contains massive symbol dicts; `helper.ts` manages translating LaTeX syntax into Unicode.
 - **`src/content.ts`**: Abstract Data classes representing chunked output (`Text`, `File`, `Photo`).
 
 ### Infrastructure & Commands
+- **`.github/workflows/ci.yml`**: GitHub Actions automated testing and builds.
 - **`scripts/postinstall.js`**: Retrieves the correct pre-compiled `.node` binary from GitHub Releases on user installation.
-- **`test/` & `tests/`**: `vitest` specifications validating both native binding integrity and TypeScript logic.
-  - Commands: `npm run build` (builds Rust + TS), `npx vitest run` (runs tests).
+- **`test/` & `tests/`**: `vitest` specifications validating native binding integrity, TypeScript logic, and integration against the live Telegram API (`tests/server.spec.ts`).
+  - Commands: `npm run build` (builds Rust + TS), `npm run test` (runs tests).
 
 ## Technical Constraints & Design Decisions
 1. **UTF-16 Offsets**: Telegram's API strictly requires entity offsets in UTF-16 code units. Because JavaScript strings are natively UTF-16, `ts-md-msg` handles offset slicing organically using standard `string.length` properties, completely avoiding the overhead of python's complex `utf16_len` conversions.

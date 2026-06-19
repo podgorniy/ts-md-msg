@@ -8,7 +8,7 @@ export type Event =
   | 'HardBreak'
   | 'Rule'
   | { Start: Tag }
-  | { End: Tag }
+  | { End: TagEnd }
   | { Text: string }
   | { Code: string }
   | { InlineMath: string }
@@ -17,6 +17,25 @@ export type Event =
   | { InlineHtml: string }
   | { FootnoteReference: string }
   | { TaskListMarker: boolean };
+
+export type TagEnd =
+  | 'Paragraph'
+  | 'Strong'
+  | 'Emphasis'
+  | 'Strikethrough'
+  | 'Item'
+  | 'TableHead'
+  | 'TableRow'
+  | 'TableCell'
+  | 'Table'
+  | 'HtmlBlock'
+  | 'FootnoteDefinition'
+  | 'CodeBlock'
+  | 'Link'
+  | 'Image'
+  | { Heading: string }
+  | { BlockQuote: null }
+  | { List: boolean };
 
 export type Tag =
   | 'Paragraph'

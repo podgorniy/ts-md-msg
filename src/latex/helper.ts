@@ -152,7 +152,8 @@ export class LatexToUnicodeHelper {
   }
 
   private static translateEscape(name: string): string {
-    return LATEX_SYMBOLS[name] || name;
+    const val = LATEX_SYMBOLS[name];
+    return val !== undefined ? val : name;
   }
 
   public parse(latex: string): string {
