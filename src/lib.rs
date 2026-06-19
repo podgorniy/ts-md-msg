@@ -52,6 +52,6 @@ pub fn render_html(markdown: String, options: Option<MarkdownOptions>) -> String
 pub fn parse(markdown: String, options: Option<MarkdownOptions>) -> Result<String> {
     let opts = map_options(options);
     let parser = Parser::new_ext(&markdown, opts);
-    let events: Vec<Event> = parser.collect();
+    let events: Vec<(Event, std::ops::Range<usize>)> = parser.into_offset_iter().collect();
     serde_json::to_string(&events).map_err(|e| Error::from_reason(e.to_string()))
 }

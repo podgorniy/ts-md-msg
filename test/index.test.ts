@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { md } from '../src/index.js';
+import * as md from '../native/index.js';
 
 describe('native bindings', () => {
   it('should render basic markdown to html', () => {
