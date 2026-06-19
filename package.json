@@ -1,6 +1,7 @@
 {
   "name": "tg-md-msg",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,10 +14,12 @@
   "scripts": {
     "build:rust": "napi build --platform --release -o ./native",
     "build": "npm run build:rust && tsc",
-    "plain": ""
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@napi-rs/cli": "^3.7.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.9"
   }
 }
