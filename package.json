@@ -12,8 +12,11 @@
     }
   },
   "scripts": {
-    "build:rust": "napi build --platform --release -o ./native",
-    "build": "npm run build:rust && tsc",
+    "build:rust": "napi build --platform --release --esm -o ./native",
+    "build:ts": "tsc",
+    "build": "npm run build:rust && npm run build:ts",
+    "postinstall": "node scripts/postinstall.js",
+    "prepare": "npm run build:ts",
     "test": "vitest run"
   },
   "devDependencies": {

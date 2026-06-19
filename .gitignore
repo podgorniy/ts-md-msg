@@ -2,8 +2,8 @@
 node_modules
 
 dist
-native
-
+native/*.node
+native/*.node.*
 # Added by cargo
 
 /target
