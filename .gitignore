@@ -6,7 +6,5 @@ native/*.node
 native/*.node.*
 # Added by cargo
 
-native
-
 /target
 .env

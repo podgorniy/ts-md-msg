@@ -46,6 +46,11 @@ if (platform === 'win32') {
 const nativeDir = path.join(rootDir, 'native');
 const targetFile = path.join(nativeDir, filename);
 
+if (process.env.SKIP_POSTINSTALL === '1') {
+  console.log(`[postinstall] SKIP_POSTINSTALL is set. Skipping download.`);
+  process.exit(0);
+}
+
 // If the file already exists (e.g., local dev or compiled locally), skip downloading
 if (fs.existsSync(targetFile)) {
   console.log(`[postinstall] Native binary ${filename} already exists. Skipping download.`);
@@ -85,5 +90,6 @@ function download(url, dest) {
 download(url, targetFile)
   .then(() => console.log(`[postinstall] Successfully downloaded ${filename}`))
   .catch(err => {
-    console.warn(`[postinstall] Warning: Could not download pre-built binary. If you are developing locally, run 'npm run build:rust'. Error: ${err.message}`);
+    console.error(`[postinstall] Error: Could not download pre-built binary. If you are developing locally, run 'npm run build:rust'. Error: ${err.message}`);
+    process.exit(1);
   });

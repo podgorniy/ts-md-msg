@@ -46,6 +46,8 @@ jobs:
           
       - name: Install dependencies
         run: npm install
+        env:
+          SKIP_POSTINSTALL: 1
 
       - name: Build native module (Linux cross)
         if: runner.os == 'Linux'

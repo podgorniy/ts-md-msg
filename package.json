@@ -11,12 +11,18 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "native/index.js",
+    "native/index.d.ts",
+    "scripts/postinstall.js"
+  ],
   "scripts": {
     "build:rust": "napi build --platform --release --esm -o ./native",
     "build:ts": "tsc",
     "build": "npm run build:rust && npm run build:ts",
     "postinstall": "node scripts/postinstall.js",
-    "prepare": "npm run build:ts",
+    "prepack": "npm run build",
     "test": "vitest run"
   },
   "devDependencies": {
