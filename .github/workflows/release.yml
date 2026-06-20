@@ -51,11 +51,11 @@ jobs:
 
       - name: Build native module (Linux cross)
         if: runner.os == 'Linux'
-        run: npx napi build --platform --release --target ${{ matrix.target }} --use-cross
+        run: npx napi build --platform --release --target ${{ matrix.target }} --use-cross -o ./native
 
       - name: Build native module (macOS/Windows)
         if: runner.os != 'Linux'
-        run: npx napi build --platform --release --target ${{ matrix.target }}
+        run: npx napi build --platform --release --target ${{ matrix.target }} -o ./native
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
