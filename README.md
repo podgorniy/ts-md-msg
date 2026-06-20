@@ -1,99 +1,390 @@
-## API
+# tg-md-msg
 
-Below is the public API of the `ts-md-msg` library. All inputs should be valid Markdown strings.
+Convert Markdown to Telegram-compatible messages. A TypeScript port of [telegramify-markdown](https://github.com/sudoskys/telegramify-markdown) (Python).
 
-### 🤔 What you want to do?
-
-* If you just want to send *static text* and don't want to worry about formatting → use **[`convert()`](#convert)**
-* If you are developing an *LLM application* or need to send potentially **super-long text** → use **[`telegramify()`](#telegramify)**
-* If your middleware only supports `parse_mode="MarkdownV2"` (no `entities` parameter) → use **[`markdownify()`](#markdownify)**
-* If you want Telegram Bot API 10.1 structured Rich Messages → use **[`richify()`](#richify)**
-* If you need to split long Rich Messages automatically to respect Telegram limits → use **[`splitRich()`](#splitrich)**
-* If you need to render standard HTML for debugging or custom logic → use **[`processMarkdown()`](#processmarkdown)**
+> **Note:** Mermaid diagram rendering is not currently supported. Mermaid code blocks fall back to plain `.txt` file uploads.
 
 ---
 
-### `convert`
+## Installation
 
-**Signature:**
-```typescript
-function convert(
-  markdown: string, 
-  options?: { isRtl?: boolean; skipEntityDetection?: boolean }
-): { text: string, entities: MessageEntity[] }
+Install directly from GitHub:
+
+```bash
+npm install github:podgorniy/ts-md-msg
 ```
 
-**Description:**
-Converts Markdown into a `(text, entities)` tuple that can be sent directly via the Telegram Bot API — no `parse_mode` needed! Use this when you want to avoid MarkdownV2 escaping headaches entirely. The returned `text` is the raw string, and `entities` is an array of Telegram `MessageEntity` objects with UTF-16 code unit offsets accurately measured for Telegram. Spoilers (`||...||`) and LaTeX formulas (`$$...$$`) are automatically pre-processed.
+This library uses a Rust native module ([pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark) via N-API) for fast, accurate Markdown parsing. A `postinstall` script automatically downloads the correct pre-compiled binary from [GitHub Releases](https://github.com/podgorniy/ts-md-msg/releases) for your platform:
+
+| Platform | Target triple |
+|---|---|
+| macOS Intel | `x86_64-apple-darwin` |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| Windows 64-bit | `x86_64-pc-windows-msvc` |
+| Linux GNU x86_64 | `x86_64-unknown-linux-gnu` |
+| Linux GNU ARM64 | `aarch64-unknown-linux-gnu` |
+| Linux musl x86_64 | `x86_64-unknown-linux-musl` |
+| Linux musl ARM64 | `aarch64-unknown-linux-musl` |
+
+**Cloning the repository directly** (e.g. for development or an unsupported platform): the postinstall download will be skipped if no matching release binary exists, so you must build the native module yourself — see [Building from source](#building-from-source).
+
+---
+
+## Background: Telegram formatting options
+
+Telegram's `sendMessage` supports three approaches to text formatting:
+
+| Approach | How | Notes |
+|---|---|---|
+| `parse_mode: 'HTML'` | Subset of HTML tags in the text | Tags must be valid; limited set |
+| `parse_mode: 'MarkdownV2'` | Markdown dialect with ~20 mandatory escape characters | Fragile; easy to produce invalid strings |
+| `entities` parameter | Plain text + structured `MessageEntity[]` array | Most reliable; no escaping needed |
+
+The `entities` approach is the recommended integration point for this library — pass the raw text and the entity array directly to Telegram without any `parse_mode`.
+
+**Limits:**
+- `sendMessage` text: **4096 UTF-16 code units**
+- `sendDocument` / media captions: **1024 UTF-16 code units**
+- `sendRichMessage` (Bot API 10.1+): **32,768 bytes** and **500 blocks** per message
+
+---
+
+## Quick start
+
+```typescript
+import { convert } from 'tg-md-msg';
+
+const { text, entities } = convert('**Hello** `world`');
+await bot.sendMessage(chatId, text, { entities });
+```
+
+For LLM output that may exceed the 4096-character limit:
+
+```typescript
+import { telegramify, ContentType } from 'tg-md-msg';
+
+const items = await telegramify(llmMarkdownOutput);
+for (const item of items) {
+  if (item.contentType === ContentType.TEXT) {
+    await bot.sendMessage(chatId, item.text, { entities: item.entities });
+  } else if (item.contentType === ContentType.FILE) {
+    await bot.sendDocument(chatId, Buffer.from(item.fileData), {}, { filename: item.fileName });
+  }
+}
+```
+
+---
+
+## Which function should I use?
+
+| I want to… | Use |
+|---|---|
+| Send formatted text via `sendMessage` (single message, not too long) | [`convert()`](#convert) |
+| Send LLM output that might exceed 4096 chars, including code files | [`telegramify()`](#telegramify) |
+| My bot framework requires a `parse_mode="MarkdownV2"` string | [`markdownify()`](#markdownify) |
+| Use `sendRichMessage` for structured, document-like content | [`richify()`](#richify) / [`telegramifyRich()`](#telegramifyrich) |
+| Split an `InputRichMessage` I already built | [`splitRich()`](#splitrich) |
+
+---
+
+## API
+
+All functions accept valid Markdown strings as input.
+
+### `convert`
+
+```typescript
+function convert(
+  markdown: string,
+  options?: { latexEscape?: boolean; config?: RenderConfig }
+): { text: string; entities: MessageEntity[] }
+```
+
+Converts Markdown into a `(text, entities)` pair for use with Telegram's `sendMessage` — no `parse_mode` needed. Entity offsets are measured in UTF-16 code units as required by Telegram.
+
+`latexEscape` (default `true`) converts LaTeX `\(...\)` / `\[...\]` notation to Unicode math symbols before parsing. Spoiler syntax `||text||` is pre-processed automatically.
+
+```typescript
+const { text, entities } = convert(markdown);
+await bot.sendMessage(chatId, text, { entities });
+```
 
 ---
 
 ### `telegramify`
 
-**Signature:**
 ```typescript
-function telegramify(
-  markdown: string, 
-  options?: { isRtl?: boolean; skipEntityDetection?: boolean; latexEscape?: boolean }
-): DeliveryItem[]
+async function telegramify(
+  markdown: string,
+  options?: {
+    maxMessageLength?: number;  // default: 4096
+    latexEscape?: boolean;      // default: true
+    renderMermaid?: boolean;    // default: true (falls back to .txt file)
+    minFileLines?: number;      // default: 1 — code blocks with >= N lines become file uploads
+  }
+): Promise<Content[]>
 ```
 
-**Description:**
-Use this when you have an arbitrarily long Markdown string (like LLM output) that exceeds Telegram's 4096 character limit. It automatically splits the Markdown into a sequence of safe, chunked delivery items (`TextItem`, `FileItem`, or `PhotoItem`). It guarantees that entities are not sliced across chunk boundaries, meaning formatting won't be broken when sent as multiple messages.
+The primary function for sending arbitrarily long Markdown content. Splits the input into a sequence of `Content` items that each fit within Telegram's limits. Code blocks above `minFileLines` are extracted as `File` items.
+
+Dispatch each item to the appropriate Telegram method:
+
+```typescript
+for (const item of await telegramify(markdown)) {
+  switch (item.contentType) {
+    case ContentType.TEXT:
+      await bot.sendMessage(chatId, item.text, { entities: item.entities });
+      break;
+    case ContentType.FILE:
+      await bot.sendDocument(chatId, Buffer.from(item.fileData), {}, { filename: item.fileName });
+      break;
+    case ContentType.PHOTO:
+      await bot.sendPhoto(chatId, Buffer.from(item.fileData));
+      break;
+  }
+}
+```
 
 ---
 
 ### `markdownify`
 
-**Signature:**
 ```typescript
 function markdownify(
-  markdown: string, 
-  options?: { isRtl?: boolean; skipEntityDetection?: boolean; latexEscape?: boolean }
+  markdown: string,
+  options?: { latexEscape?: boolean }
 ): string
 ```
 
-**Description:**
-Translates standard Markdown to Telegram's highly strict `MarkdownV2` dialect. Use this if your library or middleware strictly requires passing a single string with `parse_mode="MarkdownV2"` instead of using entities. It automatically escapes all mandatory Telegram special characters (like `(`, `)`, `.`, `-`) within text nodes while leaving your formatting intact.
+Converts Markdown to Telegram's `MarkdownV2` dialect. Use this only if your bot framework or middleware requires a `parse_mode="MarkdownV2"` string and cannot accept the `entities` parameter.
+
+All mandatory Telegram special characters (`(`, `)`, `.`, `-`, `!`, etc.) are escaped within text nodes while formatting syntax is preserved.
+
+```typescript
+await bot.sendMessage(chatId, markdownify(markdown), { parse_mode: 'MarkdownV2' });
+```
 
 ---
 
 ### `richify`
 
-**Signature:**
 ```typescript
 function richify(
-  markdown: string, 
-  options?: { mode?: 'html' | 'markdown'; isRtl?: boolean; skipEntityDetection?: boolean; latexEscape?: boolean }
+  markdown: string,
+  options?: {
+    mode?: 'html' | 'markdown';       // default: 'html'
+    isRtl?: boolean;
+    skipEntityDetection?: boolean;
+    latexEscape?: boolean;             // default: false
+  }
 ): InputRichMessage
 ```
 
-**Description:**
-Converts Markdown into an `InputRichMessage` payload specifically designed for Telegram's newer `sendRichMessage` endpoint or Telegraph flows. Telegram's Rich Message API has much broader display capabilities than standard HTML parse mode (supporting nested blockquotes, lists, tables, and math blocks like `<tg-math-block>`). Use this when you want the highest fidelity rendering of your Markdown structure natively in Telegram clients.
+Converts Markdown into an `InputRichMessage` for Telegram's `sendRichMessage` endpoint (Bot API 10.1+). Rich Messages support a broader set of block types than standard messages: nested blockquotes, tables, math expressions, collages, and 20+ other block types.
+
+`mode: 'html'` (default) runs the Markdown through the full TS rendering pipeline and produces an `{ html }` payload. `mode: 'markdown'` passes the string through directly as `{ markdown }` for Telegram to render server-side.
+
+If the result may exceed Telegram's 32,768-byte / 500-block limits, use [`telegramifyRich()`](#telegramifyrich) instead.
+
+---
+
+### `telegramifyRich`
+
+```typescript
+function telegramifyRich(
+  markdown: string,
+  options?: {
+    mode?: 'html' | 'markdown';
+    isRtl?: boolean;
+    skipEntityDetection?: boolean;
+    latexEscape?: boolean;
+    byteLimit?: number;    // default: 32768
+    blockLimit?: number;   // default: 500
+  }
+): InputRichMessage[]
+```
+
+Convenience wrapper that calls `richify()` then `splitRich()`. Use this when sending rich content of unknown length.
+
+```typescript
+const chunks = telegramifyRich(markdown);
+for (const chunk of chunks) {
+  await bot.sendRichMessage(chatId, chunk);
+}
+```
 
 ---
 
 ### `splitRich`
 
-**Signature:**
 ```typescript
 function splitRich(
-  richMessage: InputRichMessage, 
+  richMessage: InputRichMessage,
   options?: { byteLimit?: number; blockLimit?: number }
 ): InputRichMessage[]
 ```
 
-**Description:**
-Use this when you are working with `richify()` and need to send extremely long documents. It automatically splits a single `InputRichMessage` into multiple sendable chunks that respect Telegram's strict Rich Message size limits (32768 bytes and 500 blocks). It guarantees safe boundaries by only splitting between top-level HTML elements (like paragraphs or tables), ensuring that nested HTML tags are never sliced in half.
+Splits an `InputRichMessage` into chunks that satisfy Telegram's limits (default: 32,768 bytes, 500 blocks). Only splits between top-level block elements — nested tags are never sliced in half.
 
 ---
 
-### `processMarkdown`
+## MarkdownV2 utilities
 
-**Signature:**
+### `entitiesToMarkdownV2`
+
 ```typescript
-function processMarkdown(markdown: string): string
+function entitiesToMarkdownV2(
+  text: string,
+  entities?: MessageEntity[]
+): string
 ```
 
-**Description:**
-A utility wrapper that renders your Markdown into standard, browser-compatible HTML. Use this primarily for debugging the underlying parser output or if you need to use the exact same Markdown AST to render a webpage preview of the message.
+Converts an entity-based `(text, entities)` pair back into a properly-escaped MarkdownV2 string. Useful for round-tripping or for systems that only accept MarkdownV2.
+
+---
+
+### `splitMarkdownV2`
+
+```typescript
+function splitMarkdownV2(
+  text: string,
+  entities?: MessageEntity[],
+  maxUtf16Len?: number  // default: 4096
+): string[]
+```
+
+Splits a MarkdownV2 string into chunks at entity-safe boundaries. Each chunk is a standalone valid MarkdownV2 string within the length limit.
+
+---
+
+## Markdown parser API
+
+The underlying `pulldown-cmark` Rust parser is accessible directly through the TypeScript layer. This is useful for building custom renderers or extracting structured information from Markdown.
+
+### `convertWithSegments`
+
+```typescript
+function convertWithSegments(
+  markdown: string,
+  options?: { latexEscape?: boolean; config?: RenderConfig }
+): { text: string; entities: MessageEntity[]; segments: Segment[] }
+```
+
+Runs the full parsing pipeline and returns the rendered text, entity array, and a `segments` list. Each `Segment` identifies a code block or mermaid block with its character offsets in both JS string (`textStart`/`textEnd`) and UTF-16 (`utf16Start`/`utf16End`) coordinates — useful for building custom extraction or chunking logic.
+
+### `escapeLatex` / `preprocessSpoilers`
+
+```typescript
+function escapeLatex(text: string): string
+function preprocessSpoilers(text: string): string
+```
+
+Pre-processing helpers used internally before the Rust parser is invoked. `escapeLatex` converts `\(...\)` / `\[...\]` LaTeX to Unicode via symbol lookup. `preprocessSpoilers` converts `||text||` into `<tg-spoiler>text</tg-spoiler>` HTML inline tags.
+
+### Native binding
+
+The raw Rust module is located at `native/` within the package and exposes two functions:
+
+```typescript
+// native/index.d.ts
+function parse(markdown: string, options?: MarkdownOptions): string        // → JSON [Event, Range][]
+function renderHtml(markdown: string, options?: MarkdownOptions): string   // unused by this library
+```
+
+`parse()` returns a JSON-serialized array of `[Event, Range]` tuples where ranges carry UTF-16 code unit offsets. The `Event`, `Tag`, `Range`, and `Segment` TypeScript types exported from the main package describe this AST exactly.
+
+`renderHtml()` is dead code — the TypeScript layer (`rich.ts`) generates Telegram-safe HTML directly and renders the native HTML export obsolete.
+
+---
+
+## Configuration
+
+### `getRuntimeConfig`
+
+```typescript
+function getRuntimeConfig(): RenderConfig
+```
+
+Returns the global `RenderConfig` singleton. Mutate its properties to change rendering behavior for all subsequent calls.
+
+### `RenderConfig`
+
+| Property | Type | Description |
+|---|---|---|
+| `markdownSymbol` | `MarkdownSymbol` | Symbols prepended to headings, images, links, tasks, and horizontal rules |
+| `citeExpandable` | `boolean` | Blockquotes longer than 200 chars use `expandable_blockquote` entity type |
+
+### `MarkdownSymbol` defaults
+
+| Field | Default |
+|---|---|
+| `headingLevel1` | `📌` |
+| `headingLevel2` | `✏️` |
+| `headingLevel3` | `📚` |
+| `headingLevel4` | `🔖` |
+| `headingLevel5` | _(empty)_ |
+| `headingLevel6` | _(empty)_ |
+| `image` | `🖼` |
+| `taskCompleted` | `✅` |
+| `taskUncompleted` | `☑️` |
+| `horizontalRule` | `————————` |
+
+Example:
+
+```typescript
+import { getRuntimeConfig } from 'tg-md-msg';
+
+const config = getRuntimeConfig();
+config.markdownSymbol.headingLevel1 = '#';
+config.citeExpandable = false;
+```
+
+---
+
+## Content types
+
+`telegramify()` returns `Content[]`. The `contentType` discriminant determines which Telegram method to use:
+
+```typescript
+import { ContentType } from 'tg-md-msg';
+
+// ContentType.TEXT — send as a text message
+item.text       // string
+item.entities   // MessageEntity[]
+
+// ContentType.FILE — send as a document (code blocks, mermaid fallbacks)
+item.fileName         // string — suggested filename with extension
+item.fileData         // Uint8Array
+item.captionText      // string
+item.captionEntities  // MessageEntity[]
+
+// ContentType.PHOTO — send as a photo
+item.fileName         // string
+item.fileData         // Uint8Array
+item.captionText      // string
+item.captionEntities  // MessageEntity[]
+```
+
+`contentTrace.sourceType` (`'text'`, `'file'`, `'mermaid'`) provides additional context about why an item was produced.
+
+---
+
+## Building from source
+
+Requires a stable Rust toolchain and Node 18+.
+
+```bash
+git clone https://github.com/your-org/tg-md-msg
+cd tg-md-msg
+npm install
+npm run build        # builds Rust native module + TypeScript
+npm test
+```
+
+Cross-compilation for Linux ARM targets uses [`cross`](https://github.com/cross-rs/cross).
+
+---
+
+## License
+
+MIT
