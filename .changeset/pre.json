@@ -5,6 +5,7 @@
     "tg-md-msg": "0.1.0"
   },
   "changesets": [
+    "goofy-walls-stay",
     "humble-actors-work"
   ]
 }
