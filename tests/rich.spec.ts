@@ -123,6 +123,175 @@ describe('SplitRichTest', () => {
   });
 });
 
+describe('RichifyHtmlExtendedTest', () => {
+  it('strikethrough', () => {
+    const rich = richify('~~struck~~');
+    expect(rich.html).toBe('<p><s>struck</s></p>');
+  });
+
+  it('heading levels h2 through h6', () => {
+    expect(richify('## H2').html).toBe('<h2>H2</h2>');
+    expect(richify('### H3').html).toBe('<h3>H3</h3>');
+    expect(richify('#### H4').html).toBe('<h4>H4</h4>');
+    expect(richify('##### H5').html).toBe('<h5>H5</h5>');
+    expect(richify('###### H6').html).toBe('<h6>H6</h6>');
+  });
+
+  it('inline math', () => {
+    const rich = richify('$x^2 + y^2$');
+    expect(rich.html).toBe('<p><tg-math>x^2 + y^2</tg-math></p>');
+  });
+
+  it('horizontal rule', () => {
+    const rich = richify('---');
+    expect(rich.html).toBe('<hr/>');
+  });
+
+  it('soft break becomes br', () => {
+    const rich = richify('line1\nline2');
+    expect(rich.html).toBe('<p>line1<br/>line2</p>');
+  });
+
+  it('nested bold and italic', () => {
+    const rich = richify('**_nested_**');
+    expect(rich.html).toBe('<p><b><i>nested</i></b></p>');
+  });
+
+  it('strikethrough inside bold', () => {
+    const rich = richify('**~~struck~~**');
+    expect(rich.html).toBe('<p><b><s>struck</s></b></p>');
+  });
+
+  it('unchecked task list marker', () => {
+    const rich = richify('- [ ] todo');
+    expect(rich.html).toBe('<ul><li>☑ todo</li></ul>');
+  });
+
+  it('table with center alignment', () => {
+    const rich = richify('| A | B |\n|:--|:--:|\n| 1 | 2 |');
+    expect(rich.html).toContain('<td align="left">1</td>');
+    expect(rich.html).toContain('<td align="center">2</td>');
+  });
+
+  it('bold text inside table cell', () => {
+    const rich = richify('| A |\n|--|\n| **bold** |');
+    expect(rich.html).toContain('<b>bold</b>');
+  });
+
+  it('code block without language', () => {
+    const rich = richify('```\nplain code\n```');
+    expect(rich.html).toBe('<pre>plain code</pre>');
+  });
+
+  it('code block escapes html chars', () => {
+    const rich = richify('```\n<b>text & more</b>\n```');
+    expect(rich.html).toBe('<pre>&lt;b&gt;text &amp; more&lt;/b&gt;</pre>');
+  });
+
+  it('nested blockquote', () => {
+    const rich = richify('> > inner');
+    expect(rich.html).toBe('<blockquote><blockquote><p>inner</p></blockquote></blockquote>');
+  });
+
+  it('two sequential blockquotes', () => {
+    const rich = richify('> first\n\n> second');
+    expect(rich.html).toBe('<blockquote><p>first</p></blockquote><blockquote><p>second</p></blockquote>');
+  });
+
+  it('footnote reference in text', () => {
+    const rich = richify('See note[^fn1].\n\n[^fn1]: Footnote body.');
+    expect(rich.html).toContain('<a href="#fn1">[fn1]</a>');
+  });
+
+  it('footnote definition becomes tg-reference', () => {
+    const rich = richify('See[^n1].\n\n[^n1]: Body.');
+    expect(rich.html).toContain('<tg-reference>');
+    expect(rich.html).toContain('Body');
+    expect(rich.html).toContain('</tg-reference>');
+  });
+
+  it('image with non-http url falls back to link', () => {
+    const rich = richify('![alt](ftp://example.com/file)');
+    expect(rich.html).toBe('<p><a href="ftp://example.com/file">alt</a></p>');
+  });
+
+  it('image with empty url becomes plain text', () => {
+    const rich = richify('![my alt]()');
+    expect(rich.html).toBe('<p>my alt</p>');
+  });
+
+  it('custom emoji via link syntax', () => {
+    // validateTelegramEmoji requires a 19-digit id (matching Telegram's format)
+    const rich = richify('[thumbs up](tg://emoji?id=5368324170671202286)');
+    expect(rich.html).toBe('<p><tg-emoji emoji-id="5368324170671202286">thumbs up</tg-emoji></p>');
+  });
+
+  it('link with empty dest produces plain text', () => {
+    const rich = richify('[text]()');
+    expect(rich.html).toBe('<p>text</p>');
+  });
+
+  it('tg-spoiler via raw inline html', () => {
+    const rich = richify('The <tg-spoiler>secret</tg-spoiler> text');
+    expect(rich.html).toBe('<p>The <tg-spoiler>secret</tg-spoiler> text</p>');
+  });
+
+  it('isRtl option propagates', () => {
+    const rich = richify('hello', { isRtl: true });
+    expect(rich.isRtl).toBe(true);
+  });
+
+  it('skipEntityDetection option propagates', () => {
+    const rich = richify('hello', { skipEntityDetection: true });
+    expect(rich.skipEntityDetection).toBe(true);
+  });
+
+  it('mode markdown returns passthrough without parsing', () => {
+    const md = '**bold** _italic_';
+    const rich = richify(md, { mode: 'markdown' });
+    expect(rich.markdown).toBe(md);
+    expect(rich.html).toBeUndefined();
+  });
+
+  it('invalid mode throws', () => {
+    expect(() => richify('text', { mode: 'invalid' as any })).toThrow(/mode must be/);
+  });
+
+  it('latexEscape option does not break normal text', () => {
+    const rich = richify('Normal text', { latexEscape: true });
+    expect(rich.html).toBe('<p>Normal text</p>');
+  });
+});
+
+describe('SplitRichExtendedTest', () => {
+  it('isRtl is preserved across split chunks', () => {
+    const rich = richify('P1\n\nP2\n\nP3', { isRtl: true });
+    const chunks = splitRich(rich, { blockLimit: 2 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].isRtl).toBe(true);
+    expect(chunks[1].isRtl).toBe(true);
+  });
+
+  it('skipEntityDetection is preserved across split chunks', () => {
+    const rich = richify('P1\n\nP2\n\nP3', { skipEntityDetection: true });
+    const chunks = splitRich(rich, { blockLimit: 2 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].skipEntityDetection).toBe(true);
+    expect(chunks[1].skipEntityDetection).toBe(true);
+  });
+
+  it('markdown mode splits oversized single paragraph by bytes', () => {
+    const longPara = 'x'.repeat(200);
+    const rich = richify(longPara, { mode: 'markdown' });
+    const chunks = splitRich(rich, { byteLimit: 50 });
+    expect(chunks.length).toBe(4);
+    for (const c of chunks) {
+      expect(Buffer.byteLength(c.markdown!, 'utf8')).toBeLessThanOrEqual(50);
+    }
+    expect(chunks.map(c => c.markdown!).join('')).toBe(longPara);
+  });
+});
+
 describe('IntegrationMassiveRichDocumentTest', () => {
   it('splits extremely long document properly', () => {
     let mdParts = [];

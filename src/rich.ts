@@ -174,7 +174,7 @@ class RichHtmlWalker {
       } else if ('Table' in tag) {
         this.enterBlock();
         this.onStartTable(tag.Table);
-      } else if (tag === 'FootnoteDefinition') {
+      } else if ('FootnoteDefinition' in tag) {
         this.enterBlock();
         this.closeParagraph();
         this.emit(`<tg-reference>`);
@@ -491,7 +491,7 @@ class RichHtmlWalker {
 
   private headingLevel(headingData: any): number {
     let level = 'H1';
-    if (typeof headingData === 'object' && headingData.level) level = `H${headingData.level}`;
+    if (typeof headingData === 'object' && headingData !== null && headingData.level) level = String(headingData.level);
     else if (typeof headingData === 'string' || typeof headingData === 'number') level = String(headingData);
 
     if (level.startsWith('H')) {

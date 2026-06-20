@@ -310,6 +310,41 @@ describe('SpecialCharInEntityTest', () => {
   });
 });
 
+describe('TextMentionTest', () => {
+  it('text mention wraps text in brackets', () => {
+    const text = 'John';
+    const entities: MessageEntity[] = [{ type: 'text_mention', offset: 0, length: 4 }];
+    const result = entitiesToMarkdownV2(text, entities);
+    expect(result).toBe('[John]');
+  });
+});
+
+describe('DeeplyNestedEntityTest', () => {
+  it('bold containing italic containing spoiler', () => {
+    // "abcdefgh": bold 0-8, italic 2-6 ("cdef"), spoiler 3-5 ("de")
+    const text = 'abcdefgh';
+    const entities: MessageEntity[] = [
+      { type: 'bold', offset: 0, length: 8 },
+      { type: 'italic', offset: 2, length: 4 },
+      { type: 'spoiler', offset: 3, length: 2 },
+    ];
+    const result = entitiesToMarkdownV2(text, entities);
+    expect(result).toBe('*ab_c||de||f_gh*');
+  });
+});
+
+describe('AdjacentBlockquoteTest', () => {
+  it('two blockquotes on separate lines both get > prefix', () => {
+    const text = 'first\nsecond';
+    const entities: MessageEntity[] = [
+      { type: 'blockquote', offset: 0, length: 5 },
+      { type: 'blockquote', offset: 6, length: 6 },
+    ];
+    const result = entitiesToMarkdownV2(text, entities);
+    expect(result).toBe('>first\n>second');
+  });
+});
+
 describe('PreBeforeBlockquoteTest', () => {
   it('pre before blockquote', () => {
     const text = 'code\nquoted';
@@ -350,5 +385,23 @@ describe('PreBeforeBlockquoteTest', () => {
     ];
     const result = entitiesToMarkdownV2(text, entities);
     expect(result).toContain('>quoted');
+  });
+});
+
+describe('SplitMarkdownV2WithEntitiesTest', () => {
+  it('splits at newline preserving entity markup in each chunk', () => {
+    // "bold\nitalic": bold on "bold" (0-4), italic on "italic" (5-11)
+    // maxUtf16Len=9: splitEntities splits at the newline (position 5)
+    // chunk1: "bold\n" → bold entity → "*bold*\n" (7 chars ≤ 9)
+    // chunk2: "italic"  → italic entity → "_italic_" (8 chars ≤ 9)
+    const text = 'bold\nitalic';
+    const entities: MessageEntity[] = [
+      { type: 'bold', offset: 0, length: 4 },
+      { type: 'italic', offset: 5, length: 6 },
+    ];
+    const chunks = splitMarkdownV2(text, entities, 9);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0]).toBe('*bold*\n');
+    expect(chunks[1]).toBe('_italic_');
   });
 });
