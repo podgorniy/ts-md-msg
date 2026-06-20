@@ -253,3 +253,135 @@ describe('TableEdgeCasesTest', () => {
     expect(tableText).toContain('1 |');
   });
 });
+
+describe('InlineMathTest', () => {
+  it('inline math becomes code entity', () => {
+    const res = convert('$x^2$');
+    const code = findEntity(res.entities, 'code');
+    expect(code).toBeDefined();
+    expect(code!.length).toBeGreaterThan(0);
+  });
+});
+
+describe('DisplayMathTest', () => {
+  it('display math block becomes pre entity', () => {
+    const res = convert('$$E = mc^2$$');
+    const pre = findEntity(res.entities, 'pre');
+    expect(pre).toBeDefined();
+    expect(pre!.length).toBeGreaterThan(0);
+  });
+
+  it('math fence block becomes pre entity with content', () => {
+    const res = convert('```math\nE = mc^2\n```');
+    const pre = findEntity(res.entities, 'pre');
+    expect(pre).toBeDefined();
+    expect(extractEntityText(res.text, pre!)).toContain('E');
+  });
+});
+
+describe('HeadingLevelEntityTest', () => {
+  it('h3 bold only, no underline or italic', () => {
+    const res = convert('### Section');
+    expect(res.text).toContain('📚');
+    expect(findEntity(res.entities, 'bold')).toBeDefined();
+    expect(findEntity(res.entities, 'underline')).toBeUndefined();
+    expect(findEntity(res.entities, 'italic')).toBeUndefined();
+  });
+
+  it('h4 bold only, no underline', () => {
+    const res = convert('#### Sub');
+    expect(res.text).toContain('🔖');
+    expect(findEntity(res.entities, 'bold')).toBeDefined();
+    expect(findEntity(res.entities, 'underline')).toBeUndefined();
+  });
+
+  it('h5 italic only, no bold', () => {
+    const res = convert('##### Minor');
+    expect(findEntity(res.entities, 'italic')).toBeDefined();
+    expect(findEntity(res.entities, 'bold')).toBeUndefined();
+  });
+
+  it('h6 italic only, no bold', () => {
+    const res = convert('###### Tiny');
+    expect(findEntity(res.entities, 'italic')).toBeDefined();
+    expect(findEntity(res.entities, 'bold')).toBeUndefined();
+  });
+});
+
+describe('SpecialLinkSchemeTest', () => {
+  it('tel: link produces text_link entity', () => {
+    const res = convert('[call me](tel:+123456789)');
+    const link = findEntity(res.entities, 'text_link');
+    expect(link).toBeDefined();
+    expect(link!.url).toBe('tel:+123456789');
+    expect(extractEntityText(res.text, link!)).toBe('call me');
+  });
+
+  it('mailto: link produces text_link entity', () => {
+    const res = convert('[email me](mailto:user@example.com)');
+    const link = findEntity(res.entities, 'text_link');
+    expect(link).toBeDefined();
+    expect(link!.url).toBe('mailto:user@example.com');
+  });
+
+  it('tg://user mention link produces text_link entity', () => {
+    const res = convert('[User](tg://user?id=123456789)');
+    const link = findEntity(res.entities, 'text_link');
+    expect(link).toBeDefined();
+    expect(link!.url).toBe('tg://user?id=123456789');
+  });
+
+  it('tg://time image produces text_link entity with full url', () => {
+    const res = convert('![22:45 tomorrow](tg://time?unix=1647531900&format=wDT)');
+    const link = findEntity(res.entities, 'text_link');
+    expect(link).toBeDefined();
+    expect(link!.url).toBe('tg://time?unix=1647531900&format=wDT');
+  });
+});
+
+describe('HorizontalRuleTest', () => {
+  it('horizontal rule emits the rule symbol', () => {
+    const res = convert('before\n\n---\n\nafter');
+    expect(res.text).toContain('————————');
+  });
+});
+
+describe('AltBoldSyntaxTest', () => {
+  it('__bold__ produces bold entity identical to **bold**', () => {
+    const res = convert('__hello__');
+    const bold = findEntity(res.entities, 'bold');
+    expect(bold).toBeDefined();
+    expect(extractEntityText(res.text, bold!)).toBe('hello');
+  });
+});
+
+describe('NestedListTest', () => {
+  it('nested unordered list items all appear in text', () => {
+    const res = convert('- parent\n  - child');
+    expect(res.text).toContain('parent');
+    expect(res.text).toContain('child');
+    expect(res.text).toContain('⦁');
+  });
+
+  it('nested ordered list numbers each level independently', () => {
+    const res = convert('1. first\n   1. nested first\n   2. nested second\n2. second');
+    expect(res.text).toContain('1. first');
+    expect(res.text).toContain('1. nested first');
+    expect(res.text).toContain('2. nested second');
+    expect(res.text).toContain('2. second');
+  });
+});
+
+describe('ExpandableBlockquoteConverterTest', () => {
+  it('blockquote longer than 200 chars becomes expandable_blockquote', () => {
+    const longText = 'a'.repeat(201);
+    const res = convert(`> ${longText}`);
+    expect(findEntity(res.entities, 'expandable_blockquote')).toBeDefined();
+  });
+
+  it('short blockquote stays as blockquote', () => {
+    const res = convert('> short quote');
+    expect(findEntity(res.entities, 'blockquote')).toBeDefined();
+    expect(findEntity(res.entities, 'expandable_blockquote')).toBeUndefined();
+  });
+});

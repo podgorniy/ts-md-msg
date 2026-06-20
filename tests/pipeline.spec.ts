@@ -125,6 +125,58 @@ describe('StripNewlinesAdjustEdgeTest', () => {
   });
 });
 
+describe('MermaidHandlingTest', () => {
+  it('mermaid block becomes mermaid.txt file when renderMermaid is true', async () => {
+    const md = '```mermaid\ngraph LR\nA --> B\n```';
+    const results = await processMarkdown(md, { renderMermaid: true });
+    expect(results.length).toBe(1);
+    expect(results[0].contentType).toBe(ContentType.FILE);
+    const file = results[0] as File;
+    expect(file.fileName).toBe('mermaid.txt');
+    const decoder = new TextDecoder();
+    expect(decoder.decode(file.fileData)).toContain('graph LR');
+  });
+
+  it('mermaid block stays as text with pre entity when renderMermaid is false', async () => {
+    const md = '```mermaid\ngraph LR\nA --> B\n```';
+    const results = await processMarkdown(md, { renderMermaid: false });
+    expect(results.length).toBe(1);
+    expect(results[0].contentType).toBe(ContentType.TEXT);
+    const textRes = results[0] as Text;
+    expect(textRes.entities.some(e => e.type === 'pre')).toBe(true);
+  });
+});
+
+describe('CodeFileNamingTest', () => {
+  it('code block without language gets txt extension', async () => {
+    const md = '```\nsome code\n```';
+    const results = await processMarkdown(md, { minFileLines: 1 });
+    expect(results[0].contentType).toBe(ContentType.FILE);
+    expect((results[0] as File).fileName).toBe('readable.txt');
+  });
+
+  it('rust code block gets rs extension', async () => {
+    const md = '```rust\nfn main() {}\n```';
+    const results = await processMarkdown(md, { minFileLines: 1 });
+    expect(results[0].contentType).toBe(ContentType.FILE);
+    expect((results[0] as File).fileName).toContain('.rs');
+  });
+
+  it('json code block gets json extension', async () => {
+    const md = '```json\n{"key": "value"}\n```';
+    const results = await processMarkdown(md, { minFileLines: 1 });
+    expect(results[0].contentType).toBe(ContentType.FILE);
+    expect((results[0] as File).fileName).toContain('.json');
+  });
+
+  it('unknown language falls back to txt extension', async () => {
+    const md = '```brainfuck\n++++\n```';
+    const results = await processMarkdown(md, { minFileLines: 1 });
+    expect(results[0].contentType).toBe(ContentType.FILE);
+    expect((results[0] as File).fileName).toContain('.txt');
+  });
+});
+
 describe('IntegrationExcessiveEntityCountTest', () => {
   it('handles thousands of entities without crashing and preserves counts', async () => {
     const words = [];

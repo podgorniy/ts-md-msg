@@ -325,3 +325,87 @@ describe('IntegrationMassiveRichDocumentTest', () => {
     expect(totalHtml).toContain('Paragraph 599');
   });
 });
+
+describe('RichifySpecialLinksTest', () => {
+  it('tel: link produces anchor with tel: href', () => {
+    const rich = richify('[call](tel:+123456789)');
+    expect(rich.html).toBe('<p><a href="tel:+123456789">call</a></p>');
+  });
+
+  it('mailto: link produces anchor with mailto: href', () => {
+    const rich = richify('[email](mailto:user@example.com)');
+    expect(rich.html).toBe('<p><a href="mailto:user@example.com">email</a></p>');
+  });
+
+  it('tg://user mention produces anchor with tg:// href', () => {
+    const rich = richify('[User](tg://user?id=123456789)');
+    expect(rich.html).toBe('<p><a href="tg://user?id=123456789">User</a></p>');
+  });
+
+  it('tg://time image becomes a regular link (not tg-time tag)', () => {
+    const rich = richify('![22:45 tomorrow](tg://time?unix=1647531900&format=wDT)');
+    expect(rich.html).toContain('<a href="tg://time?unix=1647531900&amp;format=wDT">');
+    expect(rich.html).toContain('22:45 tomorrow');
+  });
+});
+
+describe('RichifyLatexEscapeTest', () => {
+  it('\\[...\\] becomes tg-math-block when latexEscape is on', () => {
+    const rich = richify('\\[E = mc^2\\]', { latexEscape: true });
+    expect(rich.html).toContain('<tg-math-block>');
+  });
+
+  it('\\(...\\) becomes tg-math inline when latexEscape is on', () => {
+    // content must be >= 5 chars for containsLatexSymbols to detect it
+    const rich = richify('prefix \\(x^2 + y^2\\) suffix', { latexEscape: true });
+    expect(rich.html).toContain('<tg-math>');
+  });
+
+  it('latexEscape false leaves \\[...\\] as literal escaped text', () => {
+    const rich = richify('\\[x^2\\]', { latexEscape: false });
+    expect(rich.html).not.toContain('<tg-math-block>');
+  });
+});
+
+describe('RichifyHardBreakTest', () => {
+  it('two trailing spaces produce a hard break br tag', () => {
+    const rich = richify('first line  \nsecond line');
+    expect(rich.html).toBe('<p>first line<br/>second line</p>');
+  });
+});
+
+describe('RichifyUnknownInlineHtmlTest', () => {
+  it('unknown inline html tags are escaped not passed through', () => {
+    const rich = richify('The <u>underlined</u> text');
+    expect(rich.html).toContain('&lt;u&gt;');
+    expect(rich.html).toContain('&lt;/u&gt;');
+  });
+
+  it('sup inline html is escaped', () => {
+    const rich = richify('text<sup>2</sup>');
+    expect(rich.html).toContain('&lt;sup&gt;');
+  });
+
+  it('sub inline html is escaped', () => {
+    const rich = richify('H<sub>2</sub>O');
+    expect(rich.html).toContain('&lt;sub&gt;');
+  });
+});
+
+describe('RichifyOrderedListTest', () => {
+  it('ordered list starting at 1 emits start="1"', () => {
+    const rich = richify('1. first\n2. second');
+    expect(rich.html).toBe('<ol start="1"><li>first</li><li>second</li></ol>');
+  });
+});
+
+describe('RichifyNestedListTest', () => {
+  it('nested unordered list contains outer and inner ul elements', () => {
+    const rich = richify('- parent\n  - child');
+    expect(rich.html).toContain('<ul>');
+    expect(rich.html).toContain('parent');
+    expect(rich.html).toContain('child');
+    const ulCount = (rich.html!.match(/<ul>/g) || []).length;
+    expect(ulCount).toBeGreaterThanOrEqual(2);
+  });
+});
