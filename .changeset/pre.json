@@ -6,6 +6,7 @@
   },
   "changesets": [
     "goofy-walls-stay",
-    "humble-actors-work"
+    "humble-actors-work",
+    "swift-icons-pick"
   ]
 }
