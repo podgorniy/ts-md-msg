@@ -49,6 +49,10 @@ jobs:
         env:
           SKIP_POSTINSTALL: 1
 
+      - name: Install cross
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@cross
+
       - name: Build native module (Linux cross)
         if: runner.os == 'Linux'
         run: npx napi build --platform --release --target ${{ matrix.target }} --use-cross -o ./native
