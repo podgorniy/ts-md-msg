@@ -1,0 +1,31 @@
+export declare class LatexToUnicodeHelper {
+    private static isCombiningChar;
+    private static translateCombining;
+    private static makeNot;
+    private static tryMakeSubscript;
+    private static makeSubscript;
+    private static tryMakeSuperscript;
+    private static makeSuperscript;
+    private static translateStyles;
+    private static makeSqrt;
+    private static translateSqrt;
+    private static maybeParenthesize;
+    private static makeFraction;
+    private static translateFrac;
+    private static translateEscape;
+    parse(latex: string): string;
+    private handleCommand;
+    private parseCommand;
+    private parseBlock;
+    private parseOptional;
+    private parseSpaces;
+    private parseDelimiter;
+    private parseEnvName;
+    private parseEnvironment;
+    private renderEnvironment;
+    private renderMatrix;
+    private renderCases;
+    private renderAlign;
+    private renderArray;
+    convert(latex: string): string;
+}
