@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "tg-md-msg": "0.1.0"
+  },
+  "changesets": [
+    "humble-actors-work"
+  ]
+}
