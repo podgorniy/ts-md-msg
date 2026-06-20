@@ -1,5 +1,11 @@
 # tg-md-msg
 
+## 0.1.0-alpha.3
+
+### Patch Changes
+
+- artifact production fixes #3
+
 ## 0.1.0-alpha.2
 
 ### Minor Changes
