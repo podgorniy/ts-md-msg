@@ -1,5 +1,11 @@
 # tg-md-msg
 
+## 0.1.0-alpha.4
+
+### Patch Changes
+
+- iterate
+
 ## 0.1.0-alpha.3
 
 ### Patch Changes
