@@ -23,7 +23,7 @@
     "build": "npm run build:rust && npm run build:ts",
     "postinstall": "node scripts/postinstall.js",
     "prepack": "npm run build",
-    "release": "changeset version && npm install && git add . && git commit -m \"chore(release): update versions\" && changeset tag && git push --follow-tags",
+    "release": "npx changeset && changeset version && npm install && git add . && git commit -m \"chore(release): update versions\" && changeset tag && git push --follow-tags",
     "test": "vitest run"
   },
   "devDependencies": {
