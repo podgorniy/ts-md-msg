@@ -50,15 +50,15 @@ jobs:
           SKIP_POSTINSTALL: 1
 
       - name: Install cross
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
         uses: taiki-e/install-action@cross
 
       - name: Build native module (Linux cross)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
         run: npx napi build --platform --release --target ${{ matrix.target }} --use-cross -o ./native
 
-      - name: Build native module (macOS/Windows)
-        if: runner.os != 'Linux'
+      - name: Build native module (Native)
+        if: runner.os != 'Linux' || matrix.target == 'x86_64-unknown-linux-gnu'
         run: npx napi build --platform --release --target ${{ matrix.target }} -o ./native
 
       - name: Upload artifact
