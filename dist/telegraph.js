@@ -1,5 +1,4 @@
-import { escapeLatex, preprocessSpoilers } from './converter.js';
-import * as md from '../native/index.js';
+import { parseMarkdown, STANDARD_OPTIONS } from './converter.js';
 export const TELEGRAPH_TAGS = [
     'a', 'aside', 'b', 'blockquote', 'br', 'code', 'em', 'figcaption', 'figure', 'h3', 'h4', 'hr', 'i',
     'iframe', 'img', 'li', 'ol', 'p', 'pre', 's', 'strong', 'u', 'ul', 'video',
@@ -187,10 +186,6 @@ class TelegraphWalker {
                 this._table.cell = [];
             this.pushNone();
         }
-        else if (tag === 'BlockQuote')
-            this.onStartBlockQuote();
-        else if (tag === 'FootnoteDefinition')
-            this.onStartFootnote('');
         else if ('Heading' in tag) {
             const level = String(tag.Heading.level).replace(/^H/i, '');
             this.openElement(level === '1' || level === '2' ? 'h3' : 'h4', undefined, true);
@@ -403,19 +398,8 @@ function normalizeChildren(children) {
  * the same on the page as in the chat.
  */
 export function toTelegraphNodes(markdown, options) {
-    let preprocessed = markdown;
-    if (options?.latexEscape ?? false)
-        preprocessed = escapeLatex(preprocessed);
-    preprocessed = preprocessSpoilers(preprocessed);
-    const rawEvents = JSON.parse(md.parse(preprocessed, {
-        enableStrikethrough: true,
-        enableTables: true,
-        enableTasklists: true,
-        enableMath: true,
-        enableGfm: true,
-        enableFootnotes: true,
-    }));
-    return new TelegraphWalker().walk(rawEvents);
+    const { events } = parseMarkdown(markdown, STANDARD_OPTIONS, options?.latexEscape ?? false);
+    return new TelegraphWalker().walk(events);
 }
 const encoder = new TextEncoder();
 /** The size Telegraph's content limit is measured on: UTF-8 bytes of the JSON array, unescaped. */

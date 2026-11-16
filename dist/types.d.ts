@@ -26,11 +26,15 @@ export type Event = 'SoftBreak' | 'HardBreak' | 'Rule' | {
 export type TagEnd = 'Paragraph' | 'Strong' | 'Emphasis' | 'Strikethrough' | 'Item' | 'TableHead' | 'TableRow' | 'TableCell' | 'Table' | 'HtmlBlock' | 'FootnoteDefinition' | 'CodeBlock' | 'Link' | 'Image' | {
     Heading: string;
 } | {
-    BlockQuote: null;
+    BlockQuote: string | null;
 } | {
     List: boolean;
 };
-export type Tag = 'Paragraph' | 'Strong' | 'Emphasis' | 'Strikethrough' | 'BlockQuote' | 'Item' | 'TableHead' | 'TableRow' | 'TableCell' | 'HtmlBlock' | 'FootnoteDefinition' | {
+export type Tag = 'Paragraph' | 'Strong' | 'Emphasis' | 'Strikethrough' | 'Item' | 'TableHead' | 'TableRow' | 'TableCell' | 'HtmlBlock' | {
+    FootnoteDefinition: string;
+} | {
+    BlockQuote: string | null;
+} | {
     Heading: {
         level: string;
         id: string | null;

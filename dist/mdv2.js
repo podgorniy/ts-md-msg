@@ -1,33 +1,15 @@
 import { splitEntities, utf16Len } from './entity.js';
-const _MDV2_ESCAPE_CHARS = new Set('_*[]()~`>#+-=|{}.!\\'.split(''));
-const _CODE_ESCAPE_CHARS = new Set('`\\'.split(''));
-const _URL_ESCAPE_CHARS = new Set(')\\'.split(''));
+const _MDV2_ESCAPE_RE = /[_*\[\]()~`>#+\-=|{}.!\\]/g;
+const _CODE_ESCAPE_RE = /[`\\]/g;
+const _URL_ESCAPE_RE = /[)\\]/g;
 function escapeMarkdownV2(text) {
-    let result = '';
-    for (const ch of text) {
-        if (_MDV2_ESCAPE_CHARS.has(ch))
-            result += '\\';
-        result += ch;
-    }
-    return result;
+    return text.replace(_MDV2_ESCAPE_RE, '\\$&');
 }
 function escapeCode(text) {
-    let result = '';
-    for (const ch of text) {
-        if (_CODE_ESCAPE_CHARS.has(ch))
-            result += '\\';
-        result += ch;
-    }
-    return result;
+    return text.replace(_CODE_ESCAPE_RE, '\\$&');
 }
 function escapeUrl(url) {
-    let result = '';
-    for (const ch of url) {
-        if (_URL_ESCAPE_CHARS.has(ch))
-            result += '\\';
-        result += ch;
-    }
-    return result;
+    return url.replace(_URL_ESCAPE_RE, '\\$&');
 }
 const _SIMPLE_MARKERS = {
     bold: ['*', '*'],
@@ -101,19 +83,33 @@ export function entitiesToMarkdownV2(text, entities) {
             otherEntities.push(ent);
         }
     }
-    function bqAt(idx) {
-        for (const [s, e, t] of bqRanges) {
-            if (idx >= s && idx < e)
-                return t;
-        }
-        return null;
+    // Blockquote lookup runs once per line, so it must be logarithmic. Ranges may
+    // nest: keep the prefix maximum of end positions over ranges sorted by start.
+    const expandableStarts = new Set();
+    for (const [s, , t] of bqRanges) {
+        if (t === 'expandable_blockquote')
+            expandableStarts.add(s);
     }
-    function isExpandableStart(idx) {
-        for (const [s, e, t] of bqRanges) {
-            if (idx === s && t === 'expandable_blockquote')
-                return true;
+    const sortedRanges = [...bqRanges].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const bqStarts = sortedRanges.map(r => r[0]);
+    const bqMaxEnd = [];
+    let runningMax = 0;
+    for (const [, e] of sortedRanges) {
+        runningMax = Math.max(runningMax, e);
+        bqMaxEnd.push(runningMax);
+    }
+    function inBq(idx) {
+        // Number of ranges starting at or before idx
+        let lo = 0;
+        let hi = bqStarts.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (bqStarts[mid] <= idx)
+                lo = mid + 1;
+            else
+                hi = mid;
         }
-        return false;
+        return lo > 0 && bqMaxEnd[lo - 1] > idx;
     }
     const expandableEndPositions = new Set();
     for (const [s, e, t] of bqRanges) {
@@ -153,9 +149,9 @@ export function entitiesToMarkdownV2(text, entities) {
     const parts = [];
     let prevPy = 0;
     if (bqRanges.length > 0) {
-        if (isExpandableStart(0))
+        if (expandableStarts.has(0))
             parts.push('**>');
-        else if (bqAt(0) !== null)
+        else if (inBq(0))
             parts.push('>');
     }
     function emitSegment(segment, segStartPy) {
@@ -170,9 +166,9 @@ export function entitiesToMarkdownV2(text, entities) {
                 parts.push(escapeFn(segment.substring(lineStart, i)));
                 parts.push('\n');
                 const nextPy = segStartPy + i + 1;
-                if (isExpandableStart(nextPy))
+                if (expandableStarts.has(nextPy))
                     parts.push('**>');
-                else if (bqAt(nextPy) !== null)
+                else if (inBq(nextPy))
                     parts.push('>');
                 lineStart = i + 1;
             }
@@ -196,10 +192,8 @@ export function entitiesToMarkdownV2(text, entities) {
             parts.push(tag);
             return;
         }
-        let bq = bqAt(posPy);
-        if (bq === null && posPy > 0)
-            bq = bqAt(posPy - 1);
-        if (bq)
+        // posPy may land just outside the blockquote boundary; look one back
+        if (inBq(posPy) || (posPy > 0 && inBq(posPy - 1)))
             parts.push(tag.replace(/\n/g, '\n>'));
         else
             parts.push(tag);

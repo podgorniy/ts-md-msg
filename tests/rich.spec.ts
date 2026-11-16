@@ -41,7 +41,7 @@ describe('RichifyHtmlTest', () => {
 
   it('lists and task markers', () => {
     const rich = richify('- [x] done\n- item');
-    expect(rich.html).toBe('<ul><li>✅ done</li><li>item</li></ul>');
+    expect(rich.html).toBe('<ul><li><input type="checkbox" checked/>done</li><li>item</li></ul>');
   });
 
   it('ordered list start', () => {
@@ -58,9 +58,10 @@ describe('RichifyHtmlTest', () => {
   });
 
   it('image http block', () => {
+    // Media is a block of its own; the title is its caption
     const rich = richify('![alt](https://example.com/a.jpg "cap")');
     expect(rich.html).toBe(
-      '<p><img src="https://example.com/a.jpg" alt="alt" title="cap"/></p>'
+      '<figure><img src="https://example.com/a.jpg"/><figcaption>cap</figcaption></figure>'
     );
   });
 
@@ -164,7 +165,7 @@ describe('RichifyHtmlExtendedTest', () => {
 
   it('unchecked task list marker', () => {
     const rich = richify('- [ ] todo');
-    expect(rich.html).toBe('<ul><li>☑ todo</li></ul>');
+    expect(rich.html).toBe('<ul><li><input type="checkbox"/>todo</li></ul>');
   });
 
   it('table with center alignment', () => {
@@ -204,10 +205,11 @@ describe('RichifyHtmlExtendedTest', () => {
   });
 
   it('footnote definition becomes tg-reference', () => {
-    const rich = richify('See[^n1].\n\n[^n1]: Body.');
-    expect(rich.html).toContain('<tg-reference>');
-    expect(rich.html).toContain('Body');
-    expect(rich.html).toContain('</tg-reference>');
+    // RichTextReference is inline, so it sits inside the definition's paragraph
+    const rich = richify('See[^n1].\n\n[^n1]: Body *it*.');
+    expect(rich.html).toBe(
+      '<p>See<a href="#n1">[n1]</a>.</p><p>[n1] <tg-reference name="n1">Body <i>it</i>.</tg-reference></p>'
+    );
   });
 
   it('image with non-http url falls back to link', () => {
@@ -238,12 +240,12 @@ describe('RichifyHtmlExtendedTest', () => {
 
   it('isRtl option propagates', () => {
     const rich = richify('hello', { isRtl: true });
-    expect(rich.isRtl).toBe(true);
+    expect(rich.is_rtl).toBe(true);
   });
 
   it('skipEntityDetection option propagates', () => {
     const rich = richify('hello', { skipEntityDetection: true });
-    expect(rich.skipEntityDetection).toBe(true);
+    expect(rich.skip_entity_detection).toBe(true);
   });
 
   it('mode markdown returns passthrough without parsing', () => {
@@ -268,16 +270,16 @@ describe('SplitRichExtendedTest', () => {
     const rich = richify('P1\n\nP2\n\nP3', { isRtl: true });
     const chunks = splitRich(rich, { blockLimit: 2 });
     expect(chunks.length).toBe(2);
-    expect(chunks[0].isRtl).toBe(true);
-    expect(chunks[1].isRtl).toBe(true);
+    expect(chunks[0].is_rtl).toBe(true);
+    expect(chunks[1].is_rtl).toBe(true);
   });
 
   it('skipEntityDetection is preserved across split chunks', () => {
     const rich = richify('P1\n\nP2\n\nP3', { skipEntityDetection: true });
     const chunks = splitRich(rich, { blockLimit: 2 });
     expect(chunks.length).toBe(2);
-    expect(chunks[0].skipEntityDetection).toBe(true);
-    expect(chunks[1].skipEntityDetection).toBe(true);
+    expect(chunks[0].skip_entity_detection).toBe(true);
+    expect(chunks[1].skip_entity_detection).toBe(true);
   });
 
   it('markdown mode splits oversized single paragraph by bytes', () => {
@@ -374,21 +376,18 @@ describe('RichifyHardBreakTest', () => {
   });
 });
 
-describe('RichifyUnknownInlineHtmlTest', () => {
-  it('unknown inline html tags are escaped not passed through', () => {
-    const rich = richify('The <u>underlined</u> text');
-    expect(rich.html).toContain('&lt;u&gt;');
-    expect(rich.html).toContain('&lt;/u&gt;');
+describe('RichifyInlineHtmlTest', () => {
+  it('bare formatting tags Telegram supports pass through', () => {
+    expect(richify('The <u>underlined</u> text').html).toBe('<p>The <u>underlined</u> text</p>');
+    expect(richify('text<sup>2</sup>').html).toBe('<p>text<sup>2</sup></p>');
+    expect(richify('H<sub>2</sub>O').html).toBe('<p>H<sub>2</sub>O</p>');
+    expect(richify('a <mark>hi</mark>').html).toBe('<p>a <mark>hi</mark></p>');
   });
 
-  it('sup inline html is escaped', () => {
-    const rich = richify('text<sup>2</sup>');
-    expect(rich.html).toContain('&lt;sup&gt;');
-  });
-
-  it('sub inline html is escaped', () => {
-    const rich = richify('H<sub>2</sub>O');
-    expect(rich.html).toContain('&lt;sub&gt;');
+  it('unknown tags, attributes and unbalanced closers are escaped', () => {
+    expect(richify('a <font>x</font>').html).toBe('<p>a &lt;font&gt;x&lt;/font&gt;</p>');
+    expect(richify('a <u class="x">x</u>').html).toBe('<p>a &lt;u class="x"&gt;x&lt;/u&gt;</p>');
+    expect(richify('a </u> b').html).toBe('<p>a &lt;/u&gt; b</p>');
   });
 });
 
@@ -407,5 +406,92 @@ describe('RichifyNestedListTest', () => {
     expect(rich.html).toContain('child');
     const ulCount = (rich.html!.match(/<ul>/g) || []).length;
     expect(ulCount).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('RichMediaBlocksTest', () => {
+  it('lifts media out of a paragraph into its own block', () => {
+    const rich = richify('before ![a](https://e.com/p.png) after');
+    expect(rich.html).toBe('<p>before </p><img src="https://e.com/p.png"/><p>after</p>');
+  });
+
+  it('chooses the media tag from the extension', () => {
+    expect(richify('![](https://e.com/v.mp4)').html).toBe('<video src="https://e.com/v.mp4"></video>');
+    expect(richify('![](https://e.com/a.gif)').html).toBe('<video src="https://e.com/a.gif"></video>');
+    expect(richify('![](https://e.com/s.mp3)').html).toBe('<audio src="https://e.com/s.mp3"></audio>');
+    expect(richify('![](https://e.com/f.zip?x=1)').html).toBe('<tg-document src="https://e.com/f.zip?x=1"></tg-document>');
+    expect(richify('![](https://e.com/photo)').html).toBe('<img src="https://e.com/photo"/>');
+  });
+
+  it('supports tg:// media links', () => {
+    expect(richify('![](tg://video?id=clip1)').html).toBe('<video src="tg://video?id=clip1"></video>');
+  });
+
+  it('degrades media to a link where a block cannot go', () => {
+    expect(richify('# Title ![logo](https://e.com/l.png)').html).toBe('<h1>Title <a href="https://e.com/l.png">logo</a></h1>');
+    expect(richify('| a |\n|---|\n| ![x](https://e.com/l.png) |').html).toContain('<td><a href="https://e.com/l.png">x</a></td>');
+    expect(richify('**b ![x](https://e.com/l.png)**').html).toBe('<p><b>b <a href="https://e.com/l.png">x</a></b></p>');
+  });
+
+  it('keeps media inside list items', () => {
+    expect(richify('- ![](https://e.com/p.png)').html).toBe('<ul><li><img src="https://e.com/p.png"/></li></ul>');
+  });
+
+  it('carries only the referenced media into each chunk', () => {
+    const media = [
+      { id: 'p1', media: { type: 'photo', media: 'attach://p1' } },
+      { id: 'p2', media: { type: 'photo', media: 'attach://p2' } },
+    ];
+    const chunks = telegramifyRich('![](tg://photo?id=p1)\n\ntext\n\n![](tg://photo?id=p2)', { media, blockLimit: 2 });
+    expect(chunks.map(c => c.media?.map(m => m.id))).toEqual([['p1'], ['p2']]);
+  });
+});
+
+describe('RichLimitsTest', () => {
+  it('counts list items and table rows against the block limit', () => {
+    const items = Array.from({ length: 600 }, (_, i) => `${i + 1}. item ${i}`).join('\n');
+    const chunks = telegramifyRich(items);
+    expect(chunks.length).toBe(2);
+    for (const chunk of chunks) {
+      expect((chunk.html!.match(/<li>/g) || []).length).toBeLessThan(500);
+    }
+    // the second part continues the numbering
+    expect(chunks[1].html!.startsWith('<ol start="500">')).toBe(true);
+  });
+
+  it('splits by the media limit', () => {
+    const md = Array.from({ length: 60 }, (_, i) => `![](https://e.com/${i}.png)`).join('\n\n');
+    const chunks = telegramifyRich(md);
+    expect(chunks.length).toBe(2);
+    expect((chunks[0].html!.match(/<img/g) || []).length).toBe(50);
+  });
+
+  it('keeps inline formatting when splitting an oversized paragraph', () => {
+    const rich = richify('**' + 'word '.repeat(60).trim() + '**');
+    const chunks = splitRich(rich, { byteLimit: 120 });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.html).toMatch(/^<p><b>.*<\/b><\/p>$/s);
+      expect(Buffer.byteLength(chunk.html!)).toBeLessThanOrEqual(120);
+    }
+  });
+
+  it('splits an oversized pre block into well-formed parts', () => {
+    const rich = richify('```js\n' + 'x < y;\n'.repeat(40) + '```');
+    const chunks = splitRich(rich, { byteLimit: 100 });
+    for (const chunk of chunks) {
+      expect(chunk.html).toMatch(/^<pre><code class="language-js">[^<]*<\/code><\/pre>$/);
+    }
+  });
+
+  it('splits after an HTML block instead of merging what follows', () => {
+    const md = '<div>raw</div>\n\n' + Array.from({ length: 5 }, (_, i) => `para ${i}`).join('\n\n');
+    const chunks = telegramifyRich(md, { blockLimit: 2 });
+    expect(chunks.length).toBe(3);
+  });
+
+  it('keeps bare text when splitting caller-written HTML', () => {
+    const chunks = splitRich({ html: 'lead<p>a</p>tail' }, { blockLimit: 1 });
+    expect(chunks.map(c => c.html)).toEqual(['lead', '<p>a</p>', 'tail']);
   });
 });

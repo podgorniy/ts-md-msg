@@ -2,6 +2,8 @@
 
 Convert Markdown to Telegram-compatible messages. A TypeScript port of [telegramify-markdown](https://github.com/sudoskys/telegramify-markdown) (Python).
 
+Tracks upstream telegramify-markdown 1.4.2 and Telegram Bot API 10.4.
+
 > **Note:** Mermaid diagram rendering is not currently supported. Mermaid code blocks fall back to plain `.txt` file uploads.
 
 ---
@@ -45,7 +47,7 @@ The `entities` approach is the recommended integration point for this library �
 **Limits:**
 - `sendMessage` text: **4096 UTF-16 code units**
 - `sendDocument` / media captions: **1024 UTF-16 code units**
-- `sendRichMessage` (Bot API 10.1+): **32,768 bytes** and **500 blocks** per message
+- `sendRichMessage` (Bot API 10.1+): **32,768 characters** of text, **500 blocks** (nested blocks, list items and table rows included), **50 media**, 16 nesting levels and 20 table columns per message. This library budgets the HTML markup's UTF-8 bytes against the character limit, which is a safe upper bound.
 
 ---
 
@@ -84,6 +86,7 @@ for (const item of items) {
 | My bot framework requires a `parse_mode="MarkdownV2"` string | [`markdownify()`](#markdownify) |
 | Use `sendRichMessage` for structured, document-like content | [`richify()`](#richify) / [`telegramifyRich()`](#telegramifyrich) |
 | Split an `InputRichMessage` I already built | [`splitRich()`](#splitrich) |
+| Stream LLM output while it is generated (`sendMessageDraft` / `sendRichMessageDraft` / edits) | [`DraftStream` / `EditStream`](#streaming) |
 
 ---
 
@@ -121,6 +124,7 @@ async function telegramify(
     latexEscape?: boolean;      // default: true
     renderMermaid?: boolean;    // default: true (falls back to .txt file)
     minFileLines?: number;      // default: 1 — code blocks with >= N lines become file uploads
+    config?: RenderConfig;      // default: the global config
   }
 ): Promise<Content[]>
 ```
@@ -152,7 +156,7 @@ for (const item of await telegramify(markdown)) {
 ```typescript
 function markdownify(
   markdown: string,
-  options?: { latexEscape?: boolean }
+  options?: { latexEscape?: boolean; config?: RenderConfig }
 ): string
 ```
 
@@ -176,15 +180,47 @@ function richify(
     isRtl?: boolean;
     skipEntityDetection?: boolean;
     latexEscape?: boolean;             // default: false
+    media?: InputRichMessageMedia[];   // files referenced via tg://photo?id=… links (Bot API 10.2)
   }
 ): InputRichMessage
+
+interface InputRichMessage {          // exactly Telegram's shape: pass it as `rich_message`
+  html?: string;
+  markdown?: string;
+  media?: InputRichMessageMedia[];
+  is_rtl?: boolean;
+  skip_entity_detection?: boolean;
+}
 ```
 
-Converts Markdown into an `InputRichMessage` for Telegram's `sendRichMessage` endpoint (Bot API 10.1+). Rich Messages support a broader set of block types than standard messages: nested blockquotes, tables, math expressions, collages, and 20+ other block types.
+Converts Markdown into an `InputRichMessage` for Telegram's `sendRichMessage` endpoint (Bot API 10.1+). The result is already in the Bot API's wire format, so send it as-is:
 
-`mode: 'html'` (default) runs the Markdown through the full TS rendering pipeline and produces an `{ html }` payload. `mode: 'markdown'` passes the string through directly as `{ markdown }` for Telegram to render server-side.
+```typescript
+await fetch(`https://api.telegram.org/bot${token}/sendRichMessage`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ chat_id: chatId, rich_message: richify(markdown) }),
+});
+```
 
-If the result may exceed Telegram's 32,768-byte / 500-block limits, use [`telegramifyRich()`](#telegramifyrich) instead.
+`mode: 'html'` (default) parses the Markdown and renders Telegram Rich HTML. `mode: 'markdown'` passes the string through as `{ markdown }` for Telegram to render server-side.
+
+How Markdown maps to Rich HTML:
+
+| Markdown | Rich HTML |
+|---|---|
+| `- [x] done` / `- [ ] todo` | native checkboxes `<input type="checkbox" checked/>` |
+| `![](https://…/a.png "Caption")` | a standalone media block; the title becomes `<figcaption>` |
+| `.mp4` / `.gif`, `.mp3` / `.ogg`, other extensions | `<video>`, `<audio>`, `<tg-document>` |
+| `![](tg://photo?id=x)` (also `video`, `audio`, `document`) | media from the `media` option |
+| `text[^n]` + `[^n]: definition` | `<a href="#n">` + `<tg-reference name="n">` |
+| `$x$`, `$$x$$`, ```` ```math ```` | `<tg-math>`, `<tg-math-block>` |
+| `\|\|spoiler\|\|` | `<tg-spoiler>` |
+| `<u>`, `<ins>`, `<sub>`, `<sup>`, `<mark>` (bare tags) | passed through |
+
+Media is always a block of its own: an image in the middle of a paragraph closes the paragraph around it. Inside a heading, a table cell or an inline tag, where a block cannot go, it is rendered as a link instead. `$10 … $20` reads as prices, and a single `~` doesn't start a strikethrough.
+
+If the result may exceed Telegram's limits, use [`telegramifyRich()`](#telegramifyrich) instead.
 
 ---
 
@@ -198,18 +234,19 @@ function telegramifyRich(
     isRtl?: boolean;
     skipEntityDetection?: boolean;
     latexEscape?: boolean;
+    media?: InputRichMessageMedia[];
     byteLimit?: number;    // default: 32768
     blockLimit?: number;   // default: 500
+    mediaLimit?: number;   // default: 50
   }
 ): InputRichMessage[]
 ```
 
-Convenience wrapper that calls `richify()` then `splitRich()`. Use this when sending rich content of unknown length.
+Converts Markdown into one or more `InputRichMessage` chunks that each fit Telegram's limits. In html mode it splits at the exact block boundaries of the source. Blocks that are still too big are split further: paragraphs by text with inline formatting reopened in the next part, code blocks by lines, and lists, quotes and tables by child (ordered lists keep their numbering). Each chunk carries only the `media` entries its HTML references.
 
 ```typescript
-const chunks = telegramifyRich(markdown);
-for (const chunk of chunks) {
-  await bot.sendRichMessage(chatId, chunk);
+for (const chunk of telegramifyRich(markdown)) {
+  await sendRichMessage({ chat_id: chatId, rich_message: chunk });
 }
 ```
 
@@ -220,11 +257,33 @@ for (const chunk of chunks) {
 ```typescript
 function splitRich(
   richMessage: InputRichMessage,
-  options?: { byteLimit?: number; blockLimit?: number }
+  options?: { byteLimit?: number; blockLimit?: number; mediaLimit?: number }
 ): InputRichMessage[]
 ```
 
-Splits an `InputRichMessage` into chunks that satisfy Telegram's limits (default: 32,768 bytes, 500 blocks). Only splits between top-level block elements — nested tags are never sliced in half.
+Splits an `InputRichMessage` you already have into chunks that fit Telegram's limits. HTML is split at block boundaries recovered from the markup (bare text between blocks is kept), and nested tags are never cut in half. Markdown is split at blank lines, by bytes only.
+
+---
+
+### Streaming
+
+```typescript
+import { DraftStream, EditStream } from 'tg-md-msg';
+
+const stream = new DraftStream({
+  mode: 'rich',                       // or 'entity'
+  sendDraft: (p) => api('sendRichMessageDraft', { chat_id: chatId, ...p }),
+  sendFinal: (p) => api('sendRichMessage', { chat_id: chatId, ...p }),
+  canStop: true,                      // Bot API 10.3: show a stop button
+  // keepOnStop, draftId, interval (ms, default 300), thinkingDelay (ms, default 500), config…
+});
+await stream.consume(llmTokenStream); // or stream.feed(token) …
+await stream.finish();                // sends the final message
+```
+
+A transport-agnostic port of upstream's streaming support. `DraftStream` throttles the accumulating Markdown into `sendMessageDraft` / `sendRichMessageDraft` calls, shows a `<tg-thinking>` placeholder until the first token arrives, keeps the draft alive past Telegram's 30-second expiry, and sends the complete message through `sendFinal` at the end. Payloads use Telegram's parameter names (`draft_id`, `text`, `entities`, `rich_message`, `can_stop`, `keep_on_stop`), so you can spread them into the API call. When the user presses stop, Telegram sends a `stopped_message_generation` update. Call `stream.cancel()` when it arrives.
+
+`EditStream` takes `sendMessage` (returns the message id) and `editMessage(id, payload)` instead, for chats where drafts are unavailable. Its interval is at least 1000 ms. Durations are in milliseconds. The final message is not split, so for very long output, send `telegramifyRich()` chunks yourself.
 
 ---
 
@@ -291,21 +350,25 @@ function parse(markdown: string, options?: MarkdownOptions): string        // �
 function renderHtml(markdown: string, options?: MarkdownOptions): string   // unused by this library
 ```
 
-`parse()` returns a JSON-serialized array of `[Event, Range]` tuples where ranges carry UTF-16 code unit offsets. The `Event`, `Tag`, `Range`, and `Segment` TypeScript types exported from the main package describe this AST exactly.
+`parse()` returns a JSON-serialized array of `[Event, Range]` tuples. The `Event`, `Tag`, `Range`, and `Segment` TypeScript types exported from the main package describe this AST exactly.
 
 `renderHtml()` is dead code — the TypeScript layer (`rich.ts`) generates Telegram-safe HTML directly and renders the native HTML export obsolete.
+
+Ranges are **UTF-8 byte offsets** into the parsed string (pulldown-cmark's native unit), not JS string indices.
 
 ---
 
 ## Configuration
 
-### `getRuntimeConfig`
+### `getRuntimeConfig` / `RenderConfig.isolated()`
 
 ```typescript
 function getRuntimeConfig(): RenderConfig
+RenderConfig.isolated(): RenderConfig
+config.copy(): RenderConfig
 ```
 
-Returns the global `RenderConfig` singleton. Mutate its properties to change rendering behavior for all subsequent calls.
+`getRuntimeConfig()` returns the global `RenderConfig` singleton. Mutating it changes rendering for every later call that doesn't pass its own `config`, including concurrent requests. For per-chat or per-request settings, build an independent config with `RenderConfig.isolated()` (or `copy()` an existing one) and pass it as `config` to `convert`, `telegramify`, `markdownify`, `DraftStream` or `EditStream`.
 
 ### `RenderConfig`
 
@@ -326,8 +389,10 @@ Returns the global `RenderConfig` singleton. Mutate its properties to change ren
 | `headingLevel6` | _(empty)_ |
 | `image` | `🖼` |
 | `taskCompleted` | `✅` |
-| `taskUncompleted` | `☑️` |
+| `taskUncompleted` | `☐` |
 | `horizontalRule` | `————————` |
+| `unorderedListItem` | `⦁` |
+| `orderedListSuffix` | `.` |
 
 Example:
 
@@ -380,6 +445,8 @@ npm install
 npm run build        # builds Rust native module + TypeScript
 npm test
 ```
+
+`tests/server.spec.ts` sends real messages and runs only when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (in the environment or `.env`). It deletes each message after sending.
 
 Cross-compilation for Linux ARM targets uses [`cross`](https://github.com/cross-rs/cross).
 

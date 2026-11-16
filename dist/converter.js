@@ -3,19 +3,64 @@ import { getRuntimeConfig } from './config.js';
 import { utf16Len } from './entity.js';
 import { LatexToUnicodeHelper } from './latex/helper.js';
 const _latexHelper = new LatexToUnicodeHelper();
+/** Parser options for the entity backend. */
+export const STANDARD_OPTIONS = {
+    enableTables: true,
+    enableStrikethrough: true,
+    enableTasklists: true,
+    enableMath: true,
+    enableFootnotes: true,
+};
+function parseEvents(text, options) {
+    return JSON.parse(md.parse(text, options));
+}
 const _SPOILER_RE = /(?<![\\])\|\|([\s\S]+?)\|\|/g;
-const _CODE_REGION_RE = /(```[\s\S]*?```|`[^`\n]+`)/;
-export function preprocessSpoilers(text) {
-    const parts = text.split(_CODE_REGION_RE);
-    const result = [];
-    for (let i = 0; i < parts.length; i++) {
-        let part = parts[i];
-        if (i % 2 === 0) {
-            part = part.replace(_SPOILER_RE, '<tg-spoiler>$1</tg-spoiler>');
-        }
-        result.push(part);
+// A line break plus the blockquote markers that open the next line. Indentation
+// alone stays with the text: in front of the tag it could start indented code.
+const _LINE_BREAK = '(?:\\r\\n?|\\n)(?:[ \\t]*>[ \\t]?)*';
+const _SPOILER_EDGES_RE = new RegExp(`^((?:[ \\t]*${_LINE_BREAK})*)([\\s\\S]*?)((?:${_LINE_BREAK}[ \\t]*)*)$`);
+/**
+ * Wrap ||...|| in <tg-spoiler>, keeping the open tag off a line of its own.
+ * CommonMark reads a line holding nothing but an open tag as an HTML block,
+ * which the converter drops, so line breaks at either edge stay outside.
+ */
+function spoilerReplacement(match, body) {
+    const edges = _SPOILER_EDGES_RE.exec(body);
+    const [, leading, inner, trailing] = edges;
+    if (!inner)
+        return match;
+    return `${leading}<tg-spoiler>${inner}</tg-spoiler>${trailing}`;
+}
+/** UTF-8 byte ranges of the source the parser treats as code, in document order. */
+function codeRegions(text, options) {
+    const regions = [];
+    for (const [event, range] of parseEvents(text, options)) {
+        if (typeof event !== 'object')
+            continue;
+        const isCodeBlock = 'Start' in event && typeof event.Start === 'object' && 'CodeBlock' in event.Start;
+        if (isCodeBlock || 'Code' in event)
+            regions.push([range.start, range.end]);
     }
-    return result.join('');
+    return regions;
+}
+/**
+ * Replace ||spoiler|| with <tg-spoiler>spoiler</tg-spoiler>, leaving fenced,
+ * indented and inline code alone. `options` must match the ones the result is
+ * parsed with: footnotes, for instance, change what counts as indented code.
+ */
+export function preprocessSpoilers(text, options = STANDARD_OPTIONS) {
+    if (!text.includes('||'))
+        return text;
+    const data = Buffer.from(text, 'utf8');
+    const parts = [];
+    let cursor = 0;
+    for (const [start, end] of codeRegions(text, options)) {
+        parts.push(data.toString('utf8', cursor, start).replace(_SPOILER_RE, spoilerReplacement));
+        parts.push(data.toString('utf8', start, end));
+        cursor = end;
+    }
+    parts.push(data.toString('utf8', cursor).replace(_SPOILER_RE, spoilerReplacement));
+    return parts.join('');
 }
 export function validateTelegramEmoji(url) {
     if (!url.startsWith('tg://emoji?id='))
@@ -41,7 +86,7 @@ export function escapeLatex(text) {
             return `$$${converted.trim()}$$`;
         }
         else {
-            return `$${converted.trim().replace(/\n/g, '')}$`;
+            return `$${converted.trim().replace(/^\n+|\n+$/g, '')}$`;
         }
     };
     const lines = text.split('\n\n');
@@ -52,6 +97,58 @@ export function escapeLatex(text) {
     });
     return processed.join('\n\n');
 }
+/** UTF-8 byte offsets of `$` and `~` delimiters that should read as plain text. */
+function literalDelimiters(text, events) {
+    if (!text.includes('$') && !text.includes('~'))
+        return [];
+    const source = Buffer.from(text, 'utf8');
+    const offsets = [];
+    for (const [event, range] of events) {
+        if (typeof event !== 'object')
+            continue;
+        if ('Start' in event && event.Start === 'Strikethrough') {
+            // Strikethrough takes `~~`; a single `~` reads as "approximately"
+            if (source[range.start + 1] !== 0x7e)
+                offsets.push(range.start, range.end - 1);
+        }
+        else if ('InlineMath' in event) {
+            // A closing `$` directly followed by a digit means prices (pandoc's rule)
+            const next = source[range.end];
+            if (next !== undefined && next >= 0x30 && next <= 0x39)
+                offsets.push(range.start, range.end - 1);
+        }
+    }
+    return offsets;
+}
+/** Insert a backslash before each UTF-8 byte offset of `text`. */
+function escapeAt(text, offsets) {
+    const source = Buffer.from(text, 'utf8');
+    const bounds = [0, ...offsets.sort((a, b) => a - b), source.length];
+    const pieces = [];
+    for (let i = 0; i + 1 < bounds.length; i++) {
+        pieces.push(source.toString('utf8', bounds[i], bounds[i + 1]));
+    }
+    return pieces.join('\\');
+}
+/**
+ * Preprocess and parse Markdown; return the parsed text and its ranged events.
+ * Ranges are UTF-8 byte offsets into the returned text.
+ *
+ * Inline math closed by a `$` that a digit follows (`$10.49 (~$11.20)`) and
+ * single-tilde strikethrough are rarely what chat text means, so their
+ * delimiters are escaped and the text parsed again until neither remains.
+ */
+export function parseMarkdown(markdown, options, latexEscape) {
+    let text = latexEscape ? escapeLatex(markdown) : markdown;
+    text = preprocessSpoilers(text, options);
+    let events = parseEvents(text, options);
+    let offsets;
+    while ((offsets = literalDelimiters(text, events)).length > 0) {
+        text = escapeAt(text, offsets);
+        events = parseEvents(text, options);
+    }
+    return { text, events };
+}
 class TextBuffer {
     _parts = [];
     _utf16Offset = 0;
@@ -60,7 +157,8 @@ class TextBuffer {
         this._utf16Offset += utf16Len(text);
     }
     get utf16Offset() { return this._utf16Offset; }
-    get pyOffset() { return this._parts.join('').length; }
+    // JS strings are UTF-16, so the string index and the UTF-16 offset coincide
+    get pyOffset() { return this._utf16Offset; }
     trailingNewlineCount() {
         let count = 0;
         for (let i = this._parts.length - 1; i >= 0; i--) {
@@ -86,6 +184,13 @@ class TextBuffer {
         return this._parts.join('');
     }
 }
+const INLINE_HTML_ENTITIES = {
+    'tg-spoiler': 'spoiler',
+    u: 'underline', ins: 'underline',
+    b: 'bold', strong: 'bold',
+    i: 'italic', em: 'italic',
+    s: 'strikethrough', del: 'strikethrough', strike: 'strikethrough',
+};
 const HEADING_ENTITIES = {
     H1: ['bold', 'underline'],
     H2: ['bold', 'underline'],
@@ -100,9 +205,9 @@ export class EventWalker {
     _entities = [];
     _segments = [];
     _config;
-    _sourceMarkdown;
+    _sourceBytes;
     _blockCount = 0;
-    _lastBlockEndSource = null;
+    _lastBlockStart = -1; // lower bound of the blank-line scan
     _listStack = [];
     _itemStarted = false;
     _itemIndent = '';
@@ -121,7 +226,7 @@ export class EventWalker {
     _blockquoteScopes = [];
     constructor(config, sourceMarkdown) {
         this._config = config;
-        this._sourceMarkdown = sourceMarkdown;
+        this._sourceBytes = Buffer.from(sourceMarkdown, 'utf8');
     }
     walk(events) {
         for (const [event, range] of events) {
@@ -150,7 +255,7 @@ export class EventWalker {
         if ('Start' in event)
             this.onStart(event.Start, sourceRange);
         else if ('End' in event)
-            this.onEnd(event.End, sourceRange);
+            this.onEnd(event.End);
         else if ('Text' in event)
             this.onText(event.Text);
         else if ('Code' in event)
@@ -205,8 +310,7 @@ export class EventWalker {
                 this.ensureBlockSpacing(start);
         }
     }
-    onEnd(tag, sourceRange) {
-        const end = sourceRange ? sourceRange.end : null;
+    onEnd(tag) {
         if (tag === 'Strong')
             this.popEntity('bold');
         else if (tag === 'Emphasis')
@@ -214,7 +318,7 @@ export class EventWalker {
         else if (tag === 'Strikethrough')
             this.popEntity('strikethrough');
         else if (tag === 'Paragraph')
-            this.onEndParagraph(end);
+            this.onEndParagraph();
         else if (tag === 'Item')
             this.onEndItem();
         else if (tag === 'TableCell')
@@ -222,9 +326,9 @@ export class EventWalker {
         else if (tag === 'TableRow' || tag === 'TableHead')
             this.onEndTableRow();
         else if (tag === 'Table')
-            this.onEndTable(end);
+            this.onEndTable();
         else if (tag === 'CodeBlock')
-            this.onEndCodeBlock(end);
+            this.onEndCodeBlock();
         else if (tag === 'Link')
             this.popEntity('text_link');
         else if (tag === 'Image')
@@ -232,11 +336,11 @@ export class EventWalker {
         else if (tag === 'FootnoteDefinition') { }
         else if (typeof tag === 'object' && tag !== null) {
             if ('Heading' in tag)
-                this.onEndHeading(end);
+                this.onEndHeading();
             else if ('BlockQuote' in tag)
-                this.onEndBlockQuote(end);
+                this.onEndBlockQuote();
             else if ('List' in tag)
-                this.onEndList(end);
+                this.onEndList();
         }
     }
     onText(text) {
@@ -271,7 +375,7 @@ export class EventWalker {
     onRule(sourceRange) {
         this.ensureBlockSpacing(sourceRange?.start ?? null);
         this._buf.write(this._config.markdownSymbol.horizontalRule);
-        this.markBlockEnd(sourceRange?.end ?? null);
+        this.markBlockEnd();
     }
     onInlineCode(code) {
         if (this._inTableCell) {
@@ -309,14 +413,18 @@ export class EventWalker {
         if (len > 0) {
             this._entities.push({ type: 'pre', offset: start, length: len });
         }
-        this.markBlockEnd(sourceRange?.end ?? null);
+        this.markBlockEnd();
     }
     onInlineHtml(html) {
-        const tag = html.trim().toLowerCase();
-        if (tag === '<tg-spoiler>')
-            this.pushEntity('spoiler');
-        else if (tag === '</tg-spoiler>')
-            this.popEntity('spoiler');
+        // Bare formatting tags, for what Markdown has no syntax for (underline)
+        const match = /^<(\/?)([a-z][a-z0-9-]*)\s*>$/.exec(html.trim().toLowerCase());
+        const entityType = match ? INLINE_HTML_ENTITIES[match[2]] : undefined;
+        if (!entityType)
+            return;
+        if (match[1])
+            this.popEntity(entityType);
+        else
+            this.pushEntity(entityType);
     }
     onTaskListMarker(checked) {
         const symbol = checked
@@ -345,22 +453,22 @@ export class EventWalker {
         }
         this._inHeading = true;
     }
-    onEndHeading(sourceEnd) {
+    onEndHeading() {
         for (let i = this._headingEntities.length - 1; i >= 0; i--) {
             this.popEntity(this._headingEntities[i]);
         }
         this._headingEntities = [];
         this._inHeading = false;
-        this.markBlockEnd(sourceEnd);
+        this.markBlockEnd();
     }
     onStartParagraph(sourceStart) {
         if (this._listStack.length === 0) {
             this.ensureBlockSpacing(sourceStart);
         }
     }
-    onEndParagraph(sourceEnd) {
+    onEndParagraph() {
         if (this._listStack.length === 0) {
-            this.markBlockEnd(sourceEnd);
+            this.markBlockEnd();
         }
         else if (this._buf.trailingNewlineCount() === 0) {
             this._buf.write('\n');
@@ -377,7 +485,7 @@ export class EventWalker {
             this._codeBlockLang = '';
         }
     }
-    onEndCodeBlock(sourceEnd) {
+    onEndCodeBlock() {
         this._inCodeBlock = false;
         let rawCode = this._codeBlockParts.join('');
         if (rawCode.endsWith('\n')) {
@@ -408,7 +516,7 @@ export class EventWalker {
             language: lang,
             rawCode,
         });
-        this.markBlockEnd(sourceEnd);
+        this.markBlockEnd();
         this._codeBlockLang = '';
         this._codeBlockParts = [];
         this._codeBlockStartSource = null;
@@ -420,7 +528,7 @@ export class EventWalker {
             startOffset: this._buf.utf16Offset,
         });
     }
-    onEndBlockQuote(sourceEnd) {
+    onEndBlockQuote() {
         if (this._blockquoteScopes.length > 0) {
             const scope = this._blockquoteScopes.pop();
             const len = this._buf.utf16Offset - scope.startOffset;
@@ -432,7 +540,7 @@ export class EventWalker {
                 });
             }
         }
-        this.markBlockEnd(sourceEnd);
+        this.markBlockEnd();
     }
     onStartLink(linkData) {
         const destUrl = linkData.dest_url || '';
@@ -451,7 +559,9 @@ export class EventWalker {
             this.pushEntity('custom_emoji', { customEmojiId: emojiId });
         }
         else {
-            this._buf.write(this._config.markdownSymbol.image);
+            // Through onText: inside a table cell the symbol belongs to the cell. The
+            // entity is still pushed so End(Image) does not close an outer scope.
+            this.onText(this._config.markdownSymbol.image);
             this.pushEntity('text_link', { url: destUrl });
         }
     }
@@ -469,12 +579,13 @@ export class EventWalker {
             this._buf.write('\n');
         }
         this._itemIndent = indent;
+        const symbols = this._config.markdownSymbol;
         if (currentList !== null) {
-            this._buf.write(`${indent}${currentList}. `);
+            this._buf.write(`${indent}${currentList}${symbols.orderedListSuffix} `);
             this._listStack[this._listStack.length - 1] = currentList + 1;
         }
         else {
-            this._buf.write(`${indent}⦁ `);
+            this._buf.write(`${indent}${symbols.unorderedListItem} `);
         }
         this._itemStarted = true;
     }
@@ -484,11 +595,11 @@ export class EventWalker {
         }
         this._itemStarted = false;
     }
-    onEndList(sourceEnd) {
+    onEndList() {
         if (this._listStack.length > 0)
             this._listStack.pop();
         if (this._listStack.length === 0)
-            this.markBlockEnd(sourceEnd);
+            this.markBlockEnd();
     }
     onStartTable(alignments, sourceStart) {
         this.ensureBlockSpacing(sourceStart);
@@ -507,7 +618,7 @@ export class EventWalker {
             this._currentRow = [];
         }
     }
-    onEndTable(sourceEnd) {
+    onEndTable() {
         this._inTable = false;
         const tableText = this.formatTable(this._tableRows);
         const start = this._buf.utf16Offset;
@@ -517,7 +628,7 @@ export class EventWalker {
             this._entities.push({ type: 'pre', offset: start, length: len });
         }
         this._tableRows = [];
-        this.markBlockEnd(sourceEnd);
+        this.markBlockEnd();
     }
     formatTable(rows) {
         if (rows.length === 0)
@@ -589,19 +700,39 @@ export class EventWalker {
             date_time_format: scope.dateTimeFormat,
         });
     }
-    markBlockEnd(sourceEnd) {
+    markBlockEnd() {
         this._blockCount++;
-        if (sourceEnd !== null) {
-            this._lastBlockEndSource = sourceEnd;
-        }
     }
+    /**
+     * Whether the source holds a blank line just before nextBlockStart (a UTF-8
+     * byte offset). Scans back, skipping indentation and blockquote markers, and
+     * stops at the previous block's start. Block end ranges cannot answer this:
+     * a List range swallows the blank line after the list.
+     */
     hasExtraBlankLine(nextBlockStart) {
-        if (this._lastBlockEndSource === null)
-            return false;
-        if (nextBlockStart <= this._lastBlockEndSource)
-            return false;
-        const gap = this._sourceMarkdown.substring(this._lastBlockEndSource, nextBlockStart);
-        return gap.includes('\n') || gap.includes('\r');
+        const src = this._sourceBytes;
+        let newlines = 0;
+        for (let i = nextBlockStart - 1; i > this._lastBlockStart; i--) {
+            const ch = src[i];
+            if (ch === 0x0d) {
+                // Inside a CRLF the LF already counted; only a lone CR adds one
+                if (src[i + 1] === 0x0a)
+                    continue;
+                newlines++;
+            }
+            else if (ch === 0x0a) {
+                newlines++;
+            }
+            else if (ch === 0x20 || ch === 0x09 || ch === 0x3e) {
+                continue;
+            }
+            else {
+                return false;
+            }
+            if (newlines >= 2)
+                return true;
+        }
+        return false;
     }
     ensureBlockSpacing(nextBlockStart = null) {
         if (this._blockCount > 0) {
@@ -618,26 +749,17 @@ export class EventWalker {
                 this._buf.write('\n'.repeat(needed));
             }
         }
+        if (nextBlockStart !== null) {
+            this._lastBlockStart = nextBlockStart;
+        }
     }
 }
 export function convertWithSegments(markdown, options) {
     const latexEscape = options?.latexEscape ?? true;
     const config = options?.config ?? getRuntimeConfig();
-    let preprocessed = markdown;
-    if (latexEscape) {
-        preprocessed = escapeLatex(preprocessed);
-    }
-    preprocessed = preprocessSpoilers(preprocessed);
-    const rawEvents = JSON.parse(md.parse(preprocessed, {
-        enableStrikethrough: true,
-        enableTables: true,
-        enableTasklists: true,
-        enableMath: true,
-        enableGfm: true,
-        enableFootnotes: true
-    }));
-    const walker = new EventWalker(config, preprocessed);
-    return walker.walk(rawEvents);
+    const { text, events } = parseMarkdown(markdown, STANDARD_OPTIONS, latexEscape);
+    const walker = new EventWalker(config, text);
+    return walker.walk(events);
 }
 export function convert(markdown, options) {
     const res = convertWithSegments(markdown, options);

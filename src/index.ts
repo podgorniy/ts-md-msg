@@ -1,9 +1,10 @@
 export { processMarkdown, telegramify, markdownify } from './pipeline.js';
-export { convert, convertWithSegments, escapeLatex, preprocessSpoilers } from './converter.js';
-export { getRuntimeConfig, RenderConfig } from './config.js';
+export { convert, convertWithSegments, escapeLatex, preprocessSpoilers, STANDARD_OPTIONS, ParseOptions } from './converter.js';
+export { getRuntimeConfig, RenderConfig, MarkdownSymbol } from './config.js';
 export { MessageEntity, utf16Len, splitEntities } from './entity.js';
 export { Event, Range, Segment, Tag } from './types.js';
-export { Content, Text, File, Photo, ContentTrace, ContentType } from './content.js';
+export { Content, Text, File, Photo, RichMessage, ContentTrace, ContentType } from './content.js';
 export { toTelegraphNodes, telegraphByteLength, splitTelegraphNodes, isTelegraphSafe, TELEGRAPH_TAGS, TelegraphNode, TelegraphElement, TelegraphTag, TelegraphAttrs } from './telegraph.js';
-export { richify, splitRich, telegramifyRich, InputRichMessage, RichMode, RichBlock } from './rich.js';
+export { richify, splitRich, telegramifyRich, InputRichMessage, InputRichMessageMedia, RichifyOptions, RichLimits, RichMode, RichBlock, RICH_BYTE_LIMIT, RICH_BLOCK_LIMIT, RICH_MEDIA_LIMIT } from './rich.js';
 export { entitiesToMarkdownV2, splitMarkdownV2 } from './mdv2.js';
+export { StreamCore, StreamCoreOptions, StreamState, DraftStream, DraftStreamOptions, StreamMode, DraftPayload, FinalPayload, EntityDraftPayload, RichDraftPayload, EntityFinalPayload, RichFinalPayload, DRAFT_TEXT_LIMIT, EditStream, EditStreamOptions, EDIT_MIN_INTERVAL } from './stream/index.js';

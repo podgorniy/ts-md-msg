@@ -1,90 +1,82 @@
 import {describe, expect, it} from 'vitest';
 import {convert} from '../src/index.js';
 import {telegramify} from '../src/pipeline.js';
-import {richify, telegramifyRich} from '../src/rich.js';
+import {InputRichMessage, richify, telegramifyRich} from '../src/rich.js';
 
-const BOT_TOKEN = '8626125265:AAHjyt_j4-05kA30sgiu4w1L2uAkuagUOTQ';
-const CHAT_ID = 301347024;
+// Live tests against the real Bot API. They run only when TELEGRAM_BOT_TOKEN
+// and TELEGRAM_CHAT_ID are set, in the environment or in .env.
+try {
+  process.loadEnvFile();
+} catch {
+  // no .env file
+}
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-describe('ServerIntegrationTest', () => {
+async function call(method: string, body: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({chat_id: CHAT_ID, disable_notification: true, ...body}),
+  });
+  return res.json();
+}
+
+/** Send, assert Telegram accepted it, delete it again, and return the sent Message. */
+async function sendAndDelete(method: string, body: Record<string, unknown>): Promise<any> {
+  const data = await call(method, body);
+  if (!data.ok) console.error(`${method} rejected:`, data, body);
+  expect(data.ok).toBe(true);
+  await call('deleteMessage', {message_id: data.result.message_id});
+  return data.result;
+}
+
+const sendRich = (richMessage: InputRichMessage) => sendAndDelete('sendRichMessage', {rich_message: richMessage});
+
+describe.skipIf(!BOT_TOKEN || !CHAT_ID)('ServerIntegrationTest', () => {
   it('convert API format validation', async () => {
-    if (!BOT_TOKEN) {
-      console.warn('Skipping test: No TELEGRAM_BOT_TOKEN found');
-      return;
-    }
-
     const markdown = `# Title
-**Bold** and *italic*
+**Bold** and *italic* and <u>underline</u>
 [Link](https://example.com)
 \`\`\`python
 print("Hello")
 \`\`\`
 `;
-    const { text, entities } = convert(markdown);
-
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        text: text,
-        entities: entities
-      })
-    });
-    
-    const data = await res.json();
-    if (!data.ok) {
-      // If it fails (e.g. invalid chat ID or bot), ensure it's not a parsing error
-      expect(data.description).not.toContain('can\'t parse entities');
-    } else {
-      // If it succeeds, that means the payload format was accepted by Telegram
-      expect(data.ok).toBe(true);
-    }
+    const {text, entities} = convert(markdown);
+    await sendAndDelete('sendMessage', {text, entities});
   });
 
   it('richify API HTML validation', async () => {
-    if (!BOT_TOKEN) {
-      console.warn('Skipping test: No TELEGRAM_BOT_TOKEN found');
-      return;
-    }
-
     const markdown = `# Title
-**Bold** and *italic*
+**Bold** and *italic*, H<sub>2</sub>O, x<sup>2</sup>, <mark>marked</mark>
 [Link](https://example.com)
 \`\`\`python
 print("Hello")
 \`\`\`
 `;
-    const rich = richify(markdown);
+    await sendRich(richify(markdown, {skipEntityDetection: true}));
+  });
 
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendRichMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        rich_message: {
-          html: rich.html,
-          is_rtl: rich.isRtl,
-          skip_entity_detection: rich.skipEntityDetection
-        }
-      })
-    });
+  it('task lists become native checkboxes', async () => {
+    const message = await sendRich(richify('- [x] done\n- [ ] todo'));
+    const items = message.rich_message.blocks[0].items;
+    expect(items.map((item: any) => [item.has_checkbox, item.is_checked ?? false])).toEqual([[true, true], [true, false]]);
+  });
 
-    const data = await res.json();
-    if (!data.ok) {
-      // If it fails, make sure it's not complaining about parsing or something
-      expect(data.description).not.toContain('can\'t parse entities');
-      expect(data.description).not.toContain('Unsupported start tag');
-    }
+  it('footnotes become references', async () => {
+    await sendRich(richify('Text with a ref[^n1].\n\n[^n1]: Definition with *italic*.'));
+  });
+
+  it('media blocks with captions are accepted', async () => {
+    const message = await sendRich(richify(
+      'Before ![logo](https://telegram.org/img/t_logo.png "Telegram logo") after\n\n- ![](https://telegram.org/img/t_logo.png)'
+    ));
+    const types = message.rich_message.blocks.map((block: any) => block.type);
+    expect(types).toContain('photo');
   });
 
   it('splits and sends extremely long rich document', async () => {
-    if (!BOT_TOKEN) {
-      console.warn('Skipping test: No TELEGRAM_BOT_TOKEN found');
-      return;
-    }
-
-    let mdParts = [];
+    const mdParts = [];
     for (let i = 0; i < 600; i++) {
       if (i % 5 === 0) {
         mdParts.push(`> Blockquote ${i}\n> With some long text ${'a'.repeat(50)}`);
@@ -96,68 +88,28 @@ print("Hello")
         mdParts.push(`Paragraph ${i} with **bold** and *italic* and ||spoiler||. ${'long '.repeat(10)}`);
       }
     }
-    const markdown = mdParts.join('\n\n');
-    
-    // Use the pipeline wrapper to split
-    const chunks = telegramifyRich(markdown);
+    const chunks = telegramifyRich(mdParts.join('\n\n'));
     expect(chunks.length).toBeGreaterThan(1);
-    
-    for (const [index, chunk] of chunks.entries()) {
-      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendRichMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: CHAT_ID,
-          rich_message: {
-            html: chunk.html,
-            is_rtl: chunk.isRtl,
-            skip_entity_detection: chunk.skipEntityDetection
-          }
-        })
-      });
+    for (const chunk of chunks) await sendRich(chunk);
+  }, 60000);
 
-      const data = await res.json();
-      if (!data.ok) {
-        console.error(`Failed to send chunk ${index}:`, data);
-        expect(data.ok).toBe(true);
-      }
-    }
-  });
+  it('a list longer than the block limit is split into accepted parts', async () => {
+    const items = Array.from({length: 700}, (_, i) => `${i + 1}. item ${i}`).join('\n');
+    const chunks = telegramifyRich(items);
+    expect(chunks.length).toBe(2);
+    for (const chunk of chunks) await sendRich(chunk);
+  }, 30000);
 
   it('splits and sends message with excessive entities', async () => {
-    if (!BOT_TOKEN) {
-      console.warn('Skipping test: No TELEGRAM_BOT_TOKEN found');
-      return;
-    }
-
     const words = [];
     for (let i = 0; i < 5000; i++) {
       words.push(`**bold${i}**`);
     }
-    const markdown = words.join(' ');
-    
-    // Use the standard pipeline wrapper to split
-    const chunks = await telegramify(markdown, { maxMessageLength: 4096 });
+    const chunks = await telegramify(words.join(' '), {maxMessageLength: 4096});
     expect(chunks.length).toBeGreaterThan(1);
-    
-    for (const [index, chunk] of chunks.entries()) {
+    for (const chunk of chunks) {
       if (chunk.contentType !== 'text') continue;
-      
-      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: CHAT_ID,
-          text: chunk.text,
-          entities: chunk.entities
-        })
-      });
-
-      const data = await res.json();
-      if (!data.ok) {
-        console.error(`Failed to send entity chunk ${index}:`, data);
-        expect(data.ok).toBe(true);
-      }
+      await sendAndDelete('sendMessage', {text: chunk.text, entities: chunk.entities});
     }
-  }, 20000); // Give it extra time in case of rate limits
+  }, 60000);
 });

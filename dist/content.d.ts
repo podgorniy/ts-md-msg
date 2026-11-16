@@ -1,4 +1,5 @@
 import { MessageEntity } from './entity.js';
+import { InputRichMessage } from './rich.js';
 export declare enum ContentType {
     TEXT = "text",
     FILE = "file",
@@ -32,9 +33,8 @@ export interface Photo {
     contentType: ContentType.PHOTO;
 }
 export interface RichMessage {
-    richMessage: any;
+    richMessage: InputRichMessage;
     contentTrace: ContentTrace;
     contentType: ContentType.RICH;
-    toDict(): any;
 }
 export type Content = Text | File | Photo | RichMessage;

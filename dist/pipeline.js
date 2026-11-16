@@ -111,7 +111,7 @@ export async function processMarkdown(content, options) {
     const latexEscape = options?.latexEscape ?? true;
     const renderMermaid = options?.renderMermaid ?? true;
     const minFileLines = options?.minFileLines ?? 1;
-    const { text: fullText, entities: fullEntities, segments } = convertWithSegments(content, { latexEscape });
+    const { text: fullText, entities: fullEntities, segments } = convertWithSegments(content, { latexEscape, config: options?.config });
     const result = [];
     const specialSegments = segments.filter((s) => (s.kind === 'code_block' && minFileLines > 0 && s.rawCode.split('\n').length >= minFileLines) ||
         (s.kind === 'mermaid' && renderMermaid));
@@ -142,9 +142,6 @@ export async function processMarkdown(content, options) {
             appendTextChunks(result, stripped.text, stripped.entities, maxMessageLength);
         }
     }
-    if (result.length === 0 && fullText.trim()) {
-        appendTextChunks(result, fullText.trim(), fullEntities, maxMessageLength);
-    }
     return result;
 }
 export async function telegramify(content, options) {
@@ -152,6 +149,6 @@ export async function telegramify(content, options) {
 }
 import { entitiesToMarkdownV2 } from './mdv2.js';
 export function markdownify(content, options) {
-    const { text, entities } = convertWithSegments(content, { latexEscape: options?.latexEscape });
+    const { text, entities } = convertWithSegments(content, { latexEscape: options?.latexEscape, config: options?.config });
     return entitiesToMarkdownV2(text, entities);
 }

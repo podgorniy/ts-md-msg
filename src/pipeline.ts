@@ -1,4 +1,5 @@
 import { convertWithSegments } from './converter.js';
+import { RenderConfig } from './config.js';
 import { MessageEntity, splitEntities, utf16Len } from './entity.js';
 import { getFilename } from './codeFile.js';
 import { Content, ContentTrace, ContentType, File, Photo, Text } from './content.js';
@@ -137,6 +138,7 @@ export async function processMarkdown(
     latexEscape?: boolean;
     renderMermaid?: boolean;
     minFileLines?: number;
+    config?: RenderConfig;
   }
 ): Promise<Content[]> {
   const maxMessageLength = options?.maxMessageLength ?? 4096;
@@ -144,7 +146,7 @@ export async function processMarkdown(
   const renderMermaid = options?.renderMermaid ?? true;
   const minFileLines = options?.minFileLines ?? 1;
 
-  const { text: fullText, entities: fullEntities, segments } = convertWithSegments(content, { latexEscape });
+  const { text: fullText, entities: fullEntities, segments } = convertWithSegments(content, { latexEscape, config: options?.config });
   const result: Content[] = [];
 
   const specialSegments = segments.filter(
@@ -199,10 +201,6 @@ export async function processMarkdown(
     }
   }
 
-  if (result.length === 0 && fullText.trim()) {
-    appendTextChunks(result, fullText.trim(), fullEntities, maxMessageLength);
-  }
-
   return result;
 }
 
@@ -213,6 +211,8 @@ export async function telegramify(
     latexEscape?: boolean;
     renderMermaid?: boolean;
     minFileLines?: number;
+    /** Render configuration; the global one when omitted. Pass RenderConfig.isolated() for per-request settings. */
+    config?: RenderConfig;
   }
 ): Promise<Content[]> {
   return processMarkdown(content, options);
@@ -220,7 +220,7 @@ export async function telegramify(
 
 import { entitiesToMarkdownV2 } from './mdv2.js';
 
-export function markdownify(content: string, options?: { latexEscape?: boolean }): string {
-  const { text, entities } = convertWithSegments(content, { latexEscape: options?.latexEscape });
+export function markdownify(content: string, options?: { latexEscape?: boolean; config?: RenderConfig }): string {
+  const { text, entities } = convertWithSegments(content, { latexEscape: options?.latexEscape, config: options?.config });
   return entitiesToMarkdownV2(text, entities);
 }

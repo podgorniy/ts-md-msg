@@ -170,7 +170,7 @@ describe('ListTest', () => {
   it('task list', () => {
     const res = convert('- [x] done\n- [ ] todo');
     expect(res.text).toContain('✅');
-    expect(res.text).toContain('☑');
+    expect(res.text).toContain('☐');
   });
 });
 
@@ -218,9 +218,14 @@ describe('PreprocessingUtilitiesTest', () => {
   });
 
   it('preprocessSpoilers with code blocks', () => {
-    const text = '||secret|| `||not secret||` ```\n||not secret||\n```';
+    const text = '||secret|| `||not secret||`\n\n```\n||not secret||\n```\n\n~~~\n||not secret||\n~~~\n\n    ||indented code||';
     const result = preprocessSpoilers(text);
-    expect(result).toBe('<tg-spoiler>secret</tg-spoiler> `||not secret||` ```\n||not secret||\n```');
+    expect(result).toBe('<tg-spoiler>secret</tg-spoiler> `||not secret||`\n\n```\n||not secret||\n```\n\n~~~\n||not secret||\n~~~\n\n    ||indented code||');
+  });
+
+  it('preprocessSpoilers keeps the open tag off a line of its own', () => {
+    expect(preprocessSpoilers('||\nhidden\n||')).toBe('\n<tg-spoiler>hidden</tg-spoiler>\n');
+    expect(convert('a ||\nhidden|| b').entities.map(e => e.type)).toEqual(['spoiler']);
   });
 });
 
@@ -383,5 +388,70 @@ describe('ExpandableBlockquoteConverterTest', () => {
     const res = convert('> short quote');
     expect(findEntity(res.entities, 'blockquote')).toBeDefined();
     expect(findEntity(res.entities, 'expandable_blockquote')).toBeUndefined();
+  });
+});
+
+describe('Upstream 1.3-1.4 parity', () => {
+  it('keeps the blank line between blocks after non-ASCII text', () => {
+    // Ranges are UTF-8 byte offsets; reading them as string indices lost the gap
+    expect(convert('Привет мир 😀\n\nsecond').text).toBe('Привет мир 😀\n\nsecond');
+    expect(convert('Привет мир 😀\nsecond').text).toBe('Привет мир 😀\nsecond');
+  });
+
+  it('keeps the blank line after a list', () => {
+    expect(convert('- a\n- b\n\nafter').text).toBe('⦁ a\n⦁ b\n\nafter');
+  });
+
+  it('reads $ followed by a digit as prices, not math', () => {
+    const res = convert('$10.49, with tax (**~$11.20**)');
+    expect(res.text).toBe('$10.49, with tax (~$11.20)');
+    expect(res.entities.map(e => e.type)).toEqual(['bold']);
+  });
+
+  it('requires ~~ for strikethrough', () => {
+    const res = convert('~700 JPY (**~$4.50**)');
+    expect(res.text).toBe('~700 JPY (~$4.50)');
+    expect(res.entities.map(e => e.type)).toEqual(['bold']);
+    expect(convert('~~gone~~').entities[0].type).toBe('strikethrough');
+  });
+
+  it('still renders real inline math', () => {
+    const res = convert('area $x^2$ ok');
+    expect(res.entities.map(e => e.type)).toEqual(['code']);
+  });
+
+  it('keeps an image symbol inside its table cell', () => {
+    const res = convert('| a | b |\n|---|---|\n| ![x](https://e.com/i.png) | y |');
+    expect(res.text.startsWith('a')).toBe(true);
+    expect(res.entities).toEqual([{ type: 'pre', offset: 0, length: res.text.length }]);
+  });
+
+  it('uses configurable list markers', async () => {
+    const { RenderConfig } = await import('../src/config.js');
+    const cfg = RenderConfig.isolated();
+    cfg.markdownSymbol.unorderedListItem = '-';
+    cfg.markdownSymbol.orderedListSuffix = ')';
+    expect(convert('- a\n\n1. b', { config: cfg }).text).toBe('- a\n\n1) b\n');
+    // the global config is untouched
+    expect(convert('- a').text).toBe('⦁ a\n');
+  });
+
+  it('copies a config independently', async () => {
+    const { RenderConfig } = await import('../src/config.js');
+    const a = RenderConfig.isolated();
+    a.markdownSymbol.headingLevel1 = '#';
+    a.citeExpandable = false;
+    const b = a.copy();
+    b.markdownSymbol.headingLevel1 = '!';
+    expect(a.markdownSymbol.headingLevel1).toBe('#');
+    expect(b.citeExpandable).toBe(false);
+  });
+});
+
+describe('InlineHtmlEntitiesTest', () => {
+  it('maps bare formatting tags to entities', () => {
+    const res = convert('a <u>under</u> <ins>line</ins> <b>b</b> <s>s</s>');
+    expect(res.text).toBe('a under line b s');
+    expect(res.entities.map(e => e.type)).toEqual(['underline', 'underline', 'bold', 'strikethrough']);
   });
 });

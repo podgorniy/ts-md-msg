@@ -1,5 +1,4 @@
-import { escapeLatex, preprocessSpoilers } from './converter.js';
-import * as md from '../native/index.js';
+import { parseMarkdown, STANDARD_OPTIONS } from './converter.js';
 import { Event, Range, Tag, TagEnd } from './types.js';
 
 /**
@@ -236,9 +235,7 @@ class TelegraphWalker {
     } else if (tag === 'TableCell') {
       if (this._table !== null) this._table.cell = [];
       this.pushNone();
-    } else if (tag === 'BlockQuote') this.onStartBlockQuote();
-    else if (tag === 'FootnoteDefinition') this.onStartFootnote('');
-    else if ('Heading' in tag) {
+    } else if ('Heading' in tag) {
       const level = String(tag.Heading.level).replace(/^H/i, '');
       this.openElement(level === '1' || level === '2' ? 'h3' : 'h4', undefined, true);
     } else if ('CodeBlock' in tag) {
@@ -254,7 +251,7 @@ class TelegraphWalker {
       this._table = { rows: [], headerRows: 0, row: null, cell: null };
       this.pushNone();
     } else if ('FootnoteDefinition' in tag) {
-      this.onStartFootnote(String((tag as { FootnoteDefinition: unknown }).FootnoteDefinition));
+      this.onStartFootnote(String(tag.FootnoteDefinition));
     } else this.pushNone();
   }
 
@@ -423,20 +420,8 @@ function normalizeChildren(children: TelegraphNode[]): TelegraphNode[] {
  * the same on the page as in the chat.
  */
 export function toTelegraphNodes(markdown: string, options?: { latexEscape?: boolean }): TelegraphNode[] {
-  let preprocessed = markdown;
-  if (options?.latexEscape ?? false) preprocessed = escapeLatex(preprocessed);
-  preprocessed = preprocessSpoilers(preprocessed);
-  const rawEvents = JSON.parse(
-    md.parse(preprocessed, {
-      enableStrikethrough: true,
-      enableTables: true,
-      enableTasklists: true,
-      enableMath: true,
-      enableGfm: true,
-      enableFootnotes: true,
-    })
-  ) as [Event, Range][];
-  return new TelegraphWalker().walk(rawEvents);
+  const { events } = parseMarkdown(markdown, STANDARD_OPTIONS, options?.latexEscape ?? false);
+  return new TelegraphWalker().walk(events);
 }
 
 const encoder = new TextEncoder();

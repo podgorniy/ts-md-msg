@@ -34,7 +34,7 @@ export type TagEnd =
   | 'Link'
   | 'Image'
   | { Heading: string }
-  | { BlockQuote: null }
+  | { BlockQuote: string | null }
   | { List: boolean };
 
 export type Tag =
@@ -42,13 +42,13 @@ export type Tag =
   | 'Strong'
   | 'Emphasis'
   | 'Strikethrough'
-  | 'BlockQuote'
   | 'Item'
   | 'TableHead'
   | 'TableRow'
   | 'TableCell'
   | 'HtmlBlock'
-  | 'FootnoteDefinition'
+  | { FootnoteDefinition: string }
+  | { BlockQuote: string | null }
   | { Heading: { level: string; id: string | null; classes: string[] } }
   | { CodeBlock: 'Indented' | { Fenced: string } }
   | { List: number | null }
