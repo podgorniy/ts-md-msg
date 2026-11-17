@@ -42,7 +42,7 @@ It is a TypeScript port of [telegramify-markdown](https://github.com/sudoskys/te
 The package is installed from GitHub; it is not on the npm registry. Pin a release tag:
 
 ```bash
-npm install github:podgorniy/ts-md-msg#v0.2.0
+npm install github:podgorniy/ts-md-msg#v0.2.1
 ```
 
 Requirements:
@@ -276,7 +276,7 @@ Splitting with a small margin below the text limit, such as 3800–4000 instead 
 - **LaTeX.** `latexEscape: true` turns `\(\alpha\)` and `\[…\]` into Unicode (`α`). It is on by default for entities and MarkdownV2, and off for rich output, which renders `$…$` math natively. Turn it on for rich output when the model writes `\(…\)`.
 - **Dollar amounts.** `$10 and $20` is read as prices, not as inline math, and a single `~` is not strikethrough.
 - **Spoilers.** `||text||` becomes a spoiler in entity, MarkdownV2 and rich output, except inside code. Telegraph has no spoilers and shows the text.
-- **Relative and unusual links.** URLs are passed through unchecked: `[docs](/guide)` becomes a `text_link` to `/guide`, and Telegram rejects the whole message. If the Markdown comes from an LLM, expect this now and then and fall back, for example to sending the text without entities.
+- **Links Telegram can't open are dropped.** In entity output, a link whose URL Telegram would reject, such as `/guide`, `#top`, `javascript:…`, `tel:…` or `http://localhost`, keeps its text but loses the link; one invalid `text_link` would make Telegram reject the whole message. Rich messages and MarkdownV2 keep such links, and Telegram drops them on its side. To check entities you build yourself, use `isValidTextLinkUrl(url)`.
 
 ## Upgrading from 0.1
 

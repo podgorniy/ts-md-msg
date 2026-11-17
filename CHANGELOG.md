@@ -1,5 +1,11 @@
 # tg-md-msg
 
+## 0.2.1
+
+### Patch Changes
+
+- Entity output no longer contains links Telegram rejects. Telegram refuses the whole message when one `text_link` has an invalid URL, so `[docs](/guide)`, `#anchors`, `javascript:`, `tel:`, `ftp:`, `http://localhost` and malformed URLs now keep their text but lose the link in `convert()`, `telegramify()`, `markdownify()` and entity-mode streams. The check is a port of Telegram's own (tdlib `check_link`), verified against the live Bot API, and is exported as `isValidTextLinkUrl()`. Rich messages are unchanged: Telegram drops invalid links there itself.
+
 ## 0.2.0
 
 ### Minor Changes

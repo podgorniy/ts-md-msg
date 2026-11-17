@@ -1,6 +1,7 @@
 import * as md from '../native/index.js';
 import { getRuntimeConfig } from './config.js';
 import { utf16Len } from './entity.js';
+import { isValidTextLinkUrl } from './url.js';
 import { LatexToUnicodeHelper } from './latex/helper.js';
 const _latexHelper = new LatexToUnicodeHelper();
 /** Parser options for the entity backend. */
@@ -548,7 +549,9 @@ export class EventWalker {
         if (emojiId) {
             this.pushEntity('custom_emoji', { customEmojiId: emojiId });
         }
-        else if (destUrl) {
+        else {
+            // Always pushed, so End(Link) closes this scope and not an enclosing
+            // one; finalizeEntity drops it when the URL is invalid.
             this.pushEntity('text_link', { url: destUrl });
         }
     }
@@ -687,6 +690,9 @@ export class EventWalker {
     finalizeEntity(scope) {
         const len = this._buf.utf16Offset - scope.startOffset;
         if (len <= 0)
+            return;
+        // Telegram rejects the whole message for one invalid link URL; keep the text, drop the link
+        if (scope.entityType === 'text_link' && !isValidTextLinkUrl(scope.url ?? ''))
             return;
         this._entities.push({
             type: scope.entityType,

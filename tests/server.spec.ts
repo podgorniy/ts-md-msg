@@ -46,6 +46,14 @@ print("Hello")
     await sendAndDelete('sendMessage', {text, entities});
   });
 
+  it('links with URLs Telegram rejects do not fail the message', async () => {
+    const urls = ['/guide', '#top', 'javascript:alert(1)', 'http://localhost:3000', 'ftp://example.com', 'tel:+123', 'https://example.com:0'];
+    const markdown = urls.map((url, i) => `[link ${i}](<${url}>)`).join(' ') + ' [ok](https://example.com) ![img](./a.png)';
+    const {text, entities} = convert(markdown);
+    const message = await sendAndDelete('sendMessage', {text, entities});
+    expect(message.entities.map((e: any) => e.url)).toEqual(['https://example.com/']);
+  });
+
   it('richify API HTML validation', async () => {
     const markdown = `# Title
 **Bold** and *italic*, H<sub>2</sub>O, x<sup>2</sup>, <mark>marked</mark>

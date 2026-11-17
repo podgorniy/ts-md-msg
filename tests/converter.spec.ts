@@ -314,12 +314,10 @@ describe('HeadingLevelEntityTest', () => {
 });
 
 describe('SpecialLinkSchemeTest', () => {
-  it('tel: link produces text_link entity', () => {
+  it('tel: link keeps its text without a text_link, which Telegram would reject', () => {
     const res = convert('[call me](tel:+123456789)');
-    const link = findEntity(res.entities, 'text_link');
-    expect(link).toBeDefined();
-    expect(link!.url).toBe('tel:+123456789');
-    expect(extractEntityText(res.text, link!)).toBe('call me');
+    expect(findEntity(res.entities, 'text_link')).toBeUndefined();
+    expect(res.text).toBe('call me');
   });
 
   it('mailto: link produces text_link entity', () => {

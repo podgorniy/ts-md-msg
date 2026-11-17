@@ -2,6 +2,7 @@ export { processMarkdown, telegramify, markdownify } from './pipeline.js';
 export { convert, convertWithSegments, escapeLatex, preprocessSpoilers, STANDARD_OPTIONS, ParseOptions } from './converter.js';
 export { getRuntimeConfig, RenderConfig, MarkdownSymbol } from './config.js';
 export { MessageEntity, utf16Len, splitEntities } from './entity.js';
+export { isValidTextLinkUrl } from './url.js';
 export { Event, Range, Segment, Tag } from './types.js';
 export { Content, Text, File, Photo, RichMessage, ContentTrace, ContentType } from './content.js';
 export { toTelegraphNodes, telegraphByteLength, splitTelegraphNodes, isTelegraphSafe, TELEGRAPH_TAGS, TelegraphNode, TelegraphElement, TelegraphTag, TelegraphAttrs } from './telegraph.js';

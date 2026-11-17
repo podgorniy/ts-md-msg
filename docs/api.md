@@ -8,7 +8,7 @@ import { convert, telegramifyRich, DraftStream } from 'tg-md-msg';
 
 For when to use what, and complete examples, see the [README](../README.md).
 
-- [Entities](#entities): [`convert`](#convert), [`telegramify`](#telegramify), [`splitEntities`](#splitentities), [`MessageEntity`](#messageentity), [`Content`](#content)
+- [Entities](#entities): [`convert`](#convert), [`telegramify`](#telegramify), [`splitEntities`](#splitentities), [`MessageEntity`](#messageentity), [`isValidTextLinkUrl`](#isvalidtextlinkurl), [`Content`](#content)
 - [Rich messages](#rich-messages): [`richify`](#richify), [`telegramifyRich`](#telegramifyrich), [`splitRich`](#splitrich), [`InputRichMessage`](#inputrichmessage)
 - [MarkdownV2](#markdownv2): [`markdownify`](#markdownify), [`entitiesToMarkdownV2`](#entitiestomarkdownv2), [`splitMarkdownV2`](#splitmarkdownv2)
 - [Streaming](#streaming): [`DraftStream`](#draftstream), [`EditStream`](#editstream), [`StreamCore`](#streamcore)
@@ -46,6 +46,8 @@ The output isn't split; see [`splitEntities`](#splitentities).
 |---|---|---|
 | `latexEscape` | `true` | Convert `\(…\)` and `\[…\]` LaTeX to Unicode |
 | `config` | the global config | Symbols for headings, lists, tasks; see [`RenderConfig`](#renderconfig) |
+
+Links whose URL Telegram would reject keep their text but get no `text_link`; see [`isValidTextLinkUrl`](#isvalidtextlinkurl).
 
 How elements render: headings get a symbol and are bold and underlined (levels 1–2), bold (3–4) or italic (5–6). Lists are indented with `⦁` or `1.`, task items get `✅` or `☐`, and tables become a monospace `pre` block. Images become a `🖼` link. Blockquotes longer than 200 characters become `expandable_blockquote`.
 
@@ -101,6 +103,21 @@ interface MessageEntity {
 Telegram's own shape. `type` is a `string`, so typed clients such as grammY need a cast or a filter.
 
 `utf16Len(text)` returns the length Telegram counts, which in JavaScript is `text.length`.
+
+### `isValidTextLinkUrl`
+
+```ts
+function isValidTextLinkUrl(url: string): boolean
+```
+
+Whether Telegram accepts `url` in a `text_link` entity. Telegram rejects the whole message when one entity has an invalid URL, so `convert()` uses this to drop such links. Use it for entities you build yourself.
+
+It is a port of Telegram's own check, tested against the live Bot API:
+
+- **Accepted:** `http`, `https` and `tonsite` URLs whose host contains a dot or is an IPv6 literal; domains without a scheme (`example.com`, read as http); `tg:` and `ton:` deep links.
+- **Rejected:** relative URLs (`/guide`, `./a.png`, `#top`); single-label hosts (`localhost`); other schemes (`javascript:`, `ftp:`, `tel:`, `data:`); empty, zero or out-of-range ports; spaces or characters such as `"`, `<`, `|` in the host.
+
+Telegram may convert or drop some accepted links, for example `mailto:` and `tg://user?id=…`, but the message still goes through.
 
 ### `Content`
 
