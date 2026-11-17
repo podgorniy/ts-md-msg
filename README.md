@@ -288,7 +288,7 @@ Splitting with a small margin below the text limit, such as 3800–4000 instead 
 
 ## Credits
 
-A port of [telegramify-markdown](https://github.com/sudoskys/telegramify-markdown) by sudoskys, with the parser replaced by [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark).
+A port (now diverged from the original) of [telegramify-markdown](https://github.com/sudoskys/telegramify-markdown) by sudoskys.
 
 ## License
 
